@@ -17,9 +17,9 @@ abuse-resistant pipeline.
 
 
 Tech Stack:
-- Reactjs
-- Express - Nodejs
-- MongoDB, Mongoose
+- Reactjs.
+- Express - Nodejs.
+- MongoDB, Mongoose, GeoSpatial queries.
 - Authentication: JWT, OTP verification(twillo), Bcrypt, RBAC(Middleware).
 - css
 - State management: Zustand
@@ -50,6 +50,7 @@ Core Features:
         - shows accepted or willing donors for the request with the donor details shown and can chat or contact.
         - Critical Request will send notification to all eligible donors without the need to request contact.
         - If a donor accepts the request, the card will show the donor details and contact information.
+        - The patient can mark the accepted donor as rejected or reserved or completed after donation and the status will be updated for both parties.
         - the request/:id page will also show accepted donors and their details and contact information.
         - It shows the status and after completion of donation, 
           the patient can mark it as completed which will update the status for both parties 
@@ -60,6 +61,7 @@ Core Features:
             - If accepted by the donor, the card will show the patient details and contact information
             - This acceptance process is skipped for critical patients.
             - If both parties accept, the card will show the contact details of both the patient and donor.
+            - The donot can mark the accepted patient as reserved which temporarily blocks the request for other donors and the status will be updated for both parties.
             - The donor can mark the request as completed after donation and patient can select that it's completed, which will update the status for both parties.
             - The donation history will be stored in the profile for both parties.
                 - It will be shown as verified only if they upload the supporting documents and verified by the AI or a program or admin or Org if the patient or donor is an organization.
@@ -71,6 +73,9 @@ Core Features:
         - Option to edit profile details and upload verification documents.
         - For organizations, it will show the organization details and the admin can verify the requests
           posted by the organization and also verify the donors or patients if they are an organization.
+        - Users can change their availability status for donors and patients.
+        - Users status will be updated after donation or request completion and stored in the profile as history.
+        - This will make the donor ineligible for donation for a certain period of time based on the blood type.
     6. Notifications:
         - Real-time notifications for new requests, donor acceptances, and updates on request status.
     7. Chat System:
@@ -85,4 +90,3 @@ Core Features:
         - Organizations can manage their profile, verify their members, 
           and oversee the requests posted by their members.
         - Organizations can also verify the donors or patients if they are an organization.
-        
