@@ -1,0 +1,88 @@
+Problem Statement:
+
+Critical minutes wasted on WhatsApp,
+most of these requests reaches non interested or non intented donors 
+When someone needs blood urgently, families post in WhatsApp groups, 
+get flooded with unverified responses, and waste hours coordinating manually. 
+There's no way to verify donors, no structured handoff, and no follow-up loop.
+
+Solution:
+
+Unified platform for emergency blood requests and donations to cut down response time and increase accountability.
+Instant match → verified contact → donation
+A platform that lets any user post an emergency request in under 2 minutes, 
+instantly surfaces compatible verified donors nearby, and improved visibility
+and exchanges contacts only after a consent-based OTP flow — creating an accountable, 
+abuse-resistant pipeline.
+
+
+Tech Stack:
+- Reactjs
+- Express - Nodejs
+- MongoDB, Mongoose
+- Authentication: JWT, OTP verification(twillo), Bcrypt, RBAC(Middleware).
+- css
+- State management: Zustand
+
+
+Core Features:
+1. Signup: Individual and Organizations.
+    - Organisation Request submit details of organization and admin will verify and approve the organization.
+    - users can either verify during the sign up page or later in the profile page.
+2. Login: Secure login with OTP verification or password, 
+    - user can browse the app without verification but cannot post requests or contact donors or will to donate.
+    - Organization login with only email and password.
+
+3.  Home page:
+    1. Navbar
+        - Logo
+        - Requests /Donor Home Page
+        - Find Donors /Patients
+        - Profile Page /Edit Profile and verification status, documents
+    2. Request Blood Page:
+        - Form to submit emergency blood request with details like blood group, location, urgency, and contact information.
+        - Option to upload medical documents for verification.
+    3. Find Donors Page for Patients:
+        - Shows a list of verified donors and eligible donors based on blood group and location.
+        - Each card hides donor details and there will be a button to request contact or
+          chat which will send a notification to the Donor.
+        - Card shows blood type, distance, and last donation date.
+        - shows accepted or willing donors for the request with the donor details shown and can chat or contact.
+        - Critical Request will send notification to all eligible donors without the need to request contact.
+        - If a donor accepts the request, the card will show the donor details and contact information.
+        - the request/:id page will also show accepted donors and their details and contact information.
+        - It shows the status and after completion of donation, 
+          the patient can mark it as completed which will update the status for both parties 
+          and stored in the profile as donation history.
+    4. Donor Home Page:
+        - Shows a list of nearby requests matching the donor's blood type and location.
+        - Each card hides sensitive patient details and there will be a button to accept or chat which will send a notification to the patient.
+            - If accepted by the donor, the card will show the patient details and contact information
+            - This acceptance process is skipped for critical patients.
+            - If both parties accept, the card will show the contact details of both the patient and donor.
+            - The donor can mark the request as completed after donation and patient can select that it's completed, which will update the status for both parties.
+            - The donation history will be stored in the profile for both parties.
+                - It will be shown as verified only if they upload the supporting documents and verified by the AI or a program or admin or Org if the patient or donor is an organization.
+        - Card shows blood type, distance, and urgency level.
+        - Search and filter options to find specific requests based on blood type, location, and urgency.
+        - shows accepted or willing requests for the donor with the patient details shown and can chat or contact.
+    5. Profile Page:
+        - Displays user information, verification status, and donation/request history.
+        - Option to edit profile details and upload verification documents.
+        - For organizations, it will show the organization details and the admin can verify the requests
+          posted by the organization and also verify the donors or patients if they are an organization.
+    6. Notifications:
+        - Real-time notifications for new requests, donor acceptances, and updates on request status.
+    7. Chat System:
+        - In-app chat feature for patients and donors to communicate securely without 
+          sharing personal contact information until
+    8. Admin Dashboard:
+        - Admin can manage users, verify organizations, and oversee the platform's operations.
+        - Admin can also verify the requests and donations 
+          if the patient or donor is an organization or if the documents are uploaded for verification.
+        - Admin can also verify flagged requests or accounts for abuse or spam.
+    9. Organization Dashboard:
+        - Organizations can manage their profile, verify their members, 
+          and oversee the requests posted by their members.
+        - Organizations can also verify the donors or patients if they are an organization.
+        
