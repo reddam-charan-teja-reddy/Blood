@@ -108,7 +108,6 @@ Anvith
     app.js
 
 Nikhith
-    // remaining backend related files
 │       │   ├── CreateRequestPage.jsx
 │       │   ├── RequestDetailPage.jsx   ← tracker (if owner) or detail (if donor browsing)
 │       │   ├── org/
