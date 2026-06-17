@@ -109,17 +109,32 @@ Anvith
 
 Nikhith
     // remaining backend related files
-    donor.controller.js
-    org.controller.js
-    request.controller.js
-    role.middleware.js
-    BloodRequest.js
-    DonorInterest.js
-    DonorProfile.js
-    OrgProfile.js
-    donor.routes.js
-    org.routes.js
-    request.routes.js
-    eligibility.service.js
-    matching.service.js
-    bloodCompat.js
+│       │   ├── CreateRequestPage.jsx
+│       │   ├── RequestDetailPage.jsx   ← tracker (if owner) or detail (if donor browsing)
+│       │   ├── org/
+│       │   │   └── OrgDashboardPage.jsx
+│       │   └── admin/
+
+
+│       │   ├── useRequests.js
+│       │   └── useEligibility.js
+
+│       │   ├── bloodCompat.js          ← Compatibility matrix
+│       │   └── eligibility.js          ← Rest period logic
+
+
+│       │   ├── request/
+│       │   │   ├── RequestCard.jsx
+│       │   │   ├── RequestTracker.jsx
+│       │   │   ├── RequestForm.jsx
+│       │   │   └── DonorSlot.jsx
+│       │   ├── donor/
+│       │   │   ├── DonorCard.jsx
+│       │   │   ├── EligibilityPanel.jsx
+│       │   │   └── AvailabilityToggle.jsx
+
+
+│       │       ├── BloodGroupBadge.jsx
+│       │       ├── UrgencyChip.jsx
+│       │       ├── TrustBadge.jsx
+│       │       └── LoadingSpinner.jsx
