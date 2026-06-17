@@ -90,3 +90,36 @@ Core Features:
         - Organizations can manage their profile, verify their members, 
           and oversee the requests posted by their members.
         - Organizations can also verify the donors or patients if they are an organization.
+
+
+Anvith
+    admin.controller.js
+    admin.routes.js
+    jwt.js
+    validation.js
+    auth.controller.js
+    auth.routes.js
+    auth.middleware.js
+    User.js
+    otp.service.js
+    seed.js
+    db.js
+    env.js
+    app.js
+
+Nikhith
+    // remaining backend related files
+    donor.controller.js
+    org.controller.js
+    request.controller.js
+    role.middleware.js
+    BloodRequest.js
+    DonorInterest.js
+    DonorProfile.js
+    OrgProfile.js
+    donor.routes.js
+    org.routes.js
+    request.routes.js
+    eligibility.service.js
+    matching.service.js
+    bloodCompat.js
