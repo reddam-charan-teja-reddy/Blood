@@ -39,12 +39,6 @@ router.post(
   '/',
   upload.single('document'),
   (req, res, next) => {
-    if (!req.file) {
-      return res.status(422).json({
-        error: 'Validation failed',
-        details: { document: ['Medical proof document is mandatory for request creation'] },
-      });
-    }
     if (req.body.unitsNeeded) {
       req.body.unitsNeeded = parseInt(req.body.unitsNeeded, 10);
     }

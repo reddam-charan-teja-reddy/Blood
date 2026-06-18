@@ -7,7 +7,7 @@ import BloodGroupBadge from '../components/shared/BloodGroupBadge';
 import UrgencyChip from '../components/shared/UrgencyChip';
 import TrustBadge from '../components/shared/TrustBadge';
 import LoadingSpinner from '../components/shared/LoadingSpinner';
-import { MapPin, Phone, User, Calendar, ShieldAlert, Clock, Share2, Clipboard, MessageCircle, Check, AlertTriangle, Loader2, Heart, CheckCircle } from 'lucide-react';
+import { MapPin, Phone, User, Calendar, ShieldAlert, Clock, Share2, Clipboard, MessageCircle, Check, AlertTriangle, Loader2, Heart, CheckCircle, Eye, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import ChatDrawer from '../components/request/ChatDrawer';
 
@@ -41,6 +41,13 @@ export default function RequestDetailPage() {
    * at the moment of reveal. We cache them in state for the session.
    */
   const [revealedContacts, setRevealedContacts] = useState(null);
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+
+  const getDocumentUrl = (path) => {
+    if (!path) return '';
+    const origin = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1').replace('/api/v1', '');
+    return `${origin}${path}`;
+  };
 
   // 1. Query request details
   const { data: requestDetails, isLoading, error } = useQuery({
@@ -401,6 +408,38 @@ export default function RequestDetailPage() {
                 </p>
               </div>
             </div>
+
+            {/* Medical Proof Document Section */}
+            {request.documentPath ? (
+              <div className="flex align-center gap-3" style={{ backgroundColor: 'rgba(59, 130, 246, 0.05)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                <ShieldAlert size={20} color="var(--primary-color)" />
+                <div style={{ flex: 1 }}>
+                  <h4 style={{ fontWeight: 600, color: '#fff', fontSize: '0.875rem' }}>Medical Verification</h4>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                    Verification document is available.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPreviewModalOpen(true)}
+                  className="btn btn-secondary btn-sm flex align-center gap-1"
+                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                >
+                  <Eye size={12} />
+                  <span>Preview</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex align-center gap-3" style={{ backgroundColor: 'rgba(245, 158, 11, 0.05)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+                <AlertTriangle size={20} color="var(--warning-color)" />
+                <div style={{ flex: 1 }}>
+                  <h4 style={{ fontWeight: 600, color: '#fff', fontSize: '0.875rem' }}>Unverified Request</h4>
+                  <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                    No medical proof document was uploaded.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Unlocked fields */}
             {request.wardNumber && (
@@ -1233,6 +1272,55 @@ export default function RequestDetailPage() {
         requestId={request?._id} 
         currentUser={user} 
       />
+
+      {/* 4. Modal: Medical Document Preview */}
+      {isPreviewModalOpen && request.documentPath && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content card" style={{ maxWidth: '600px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: '1rem', backgroundColor: 'var(--surface-color)' }}>
+            <div className="flex justify-between align-center" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem' }}>
+              <h3 style={{ fontWeight: 700, color: '#fff' }}>Medical Verification Document</h3>
+              <button 
+                onClick={() => setIsPreviewModalOpen(false)} 
+                className="btn btn-secondary btn-sm" 
+                style={{ padding: '0', borderRadius: '50%', minWidth: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '300px', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 'var(--radius-sm)' }}>
+              {request.documentPath.toLowerCase().endsWith('.pdf') ? (
+                <iframe 
+                  src={getDocumentUrl(request.documentPath)} 
+                  title="Medical Verification Document" 
+                  style={{ width: '100%', height: '500px', border: 'none' }}
+                />
+              ) : (
+                <img 
+                  src={getDocumentUrl(request.documentPath)} 
+                  alt="Medical Verification" 
+                  style={{ maxWidth: '100%', maxHeight: '500px', objectFit: 'contain' }}
+                />
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3" style={{ borderTop: '1px solid var(--border-color)', paddingTop: '0.75rem' }}>
+              <a 
+                href={getDocumentUrl(request.documentPath)} 
+                target="_blank" 
+                rel="noopener noreferrer" 
+                className="btn btn-secondary flex align-center gap-1"
+                style={{ fontSize: '0.875rem' }}
+              >
+                Open in New Tab
+              </a>
+              <button onClick={() => setIsPreviewModalOpen(false)} className="btn btn-primary" style={{ fontSize: '0.875rem' }}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

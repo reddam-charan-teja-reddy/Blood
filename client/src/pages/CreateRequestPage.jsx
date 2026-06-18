@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
+import { compressImage } from '../utils/compression';
 import BloodGroupBadge from '../components/shared/BloodGroupBadge';
 import UrgencyChip from '../components/shared/UrgencyChip';
 import { INDIAN_STATES } from '../utils/indianStates';
@@ -93,11 +94,6 @@ export default function CreateRequestPage() {
           toast.error('Normal urgency requests must expire within 7 days (168 hours) from now');
           return;
         }
-      }
-
-      if (!documentFile) {
-        toast.error('Medical proof document is mandatory');
-        return;
       }
 
       setStep(2);
@@ -299,13 +295,20 @@ export default function CreateRequestPage() {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Upload Medical Proof Document (Mandatory)</label>
+                <label className="form-label">Upload Medical Proof Document (Optional)</label>
                 <input 
                   type="file" 
                   accept=".pdf,.png,.jpg,.jpeg"
                   className="form-input" 
-                  onChange={e => setDocumentFile(e.target.files[0])}
-                  required
+                  onChange={async (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                      const compressed = await compressImage(file);
+                      setDocumentFile(compressed);
+                    } else {
+                      setDocumentFile(null);
+                    }
+                  }}
                 />
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   Upload doctor requisition, hospital letter, or test report verifying this emergency blood need.

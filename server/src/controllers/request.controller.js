@@ -9,6 +9,8 @@ import { compatibleRecipientGroups } from '../utils/bloodCompat.js';
 import { sendOTP, verifyOTP } from '../services/otp.service.js';
 import { computeEligibility } from '../services/eligibility.service.js';
 import { findMatchingDonors } from '../services/matching.service.js';
+import { OrgProfile } from '../models/OrgProfile.js';
+import { InventoryLog } from '../models/InventoryLog.js';
 
 export const getRequests = async (req, res, next) => {
   try {
@@ -757,15 +759,19 @@ export const reportOutcome = async (req, res, next) => {
       return res.status(404).json({ error: 'Associated request not found' });
     }
 
+    const isAdmin = req.user && req.user.role === 'ADMIN';
     const isDonor = interest.donorId.toString() === req.user.id;
     const isRequester = request.requesterId.toString() === req.user.id;
 
-    if (!isDonor && !isRequester) {
+    if (!isDonor && !isRequester && !isAdmin) {
       return res.status(403).json({ error: 'Unauthorized to report outcome' });
     }
 
     // Set the specific outcome fields
-    if (isDonor) {
+    if (isAdmin) {
+      interest.donorOutcome = outcome;
+      interest.requesterOutcome = outcome;
+    } else if (isDonor) {
       interest.donorOutcome = outcome;
     } else if (isRequester) {
       interest.requesterOutcome = outcome;
@@ -793,6 +799,26 @@ export const reportOutcome = async (req, res, next) => {
               donorProfile.lastWholeBloodDonation = new Date();
             }
             await donorProfile.save();
+          }
+
+          // Automatically decrement from OrgProfile inventory if donor is an ORG
+          const donorUser = await User.findById(interest.donorId);
+          if (donorUser && donorUser.role === 'ORG') {
+            const orgProfile = await OrgProfile.findOne({ userId: interest.donorId });
+            if (orgProfile) {
+              const bg = request.bloodGroup;
+              const currentInv = orgProfile.inventory[bg] || 0;
+              const newInv = Math.max(0, currentInv - 1);
+              orgProfile.inventory[bg] = newInv;
+              await orgProfile.save();
+
+              await InventoryLog.create({
+                orgId: orgProfile._id,
+                bloodGroup: bg,
+                delta: -1,
+                reason: `Blood Request Fulfilment: Request ID ${request._id}`,
+              });
+            }
           }
 
           // 2. Increment unitsConfirmed on the BloodRequest

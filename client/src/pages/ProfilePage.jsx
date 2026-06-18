@@ -7,6 +7,7 @@ import { computeEligibility } from '../lib/eligibility';
 import { User, MapPin, Scale, Heart, Shield, ToggleLeft, ToggleRight, Award, Calendar, Check, AlertTriangle, AlertCircle, Loader2, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { INDIAN_STATES } from '../utils/indianStates';
+import { compressImage } from '../utils/compression';
 
 export default function ProfilePage() {
   const { user, updateUser, clearAuth } = useAuthStore();
@@ -85,11 +86,12 @@ export default function ProfilePage() {
     const file = e.target.files[0];
     if (!file) return;
 
-    const formData = new FormData();
-    formData.append('document', file);
-
     setIsLoadingUpload(true);
     try {
+      const compressed = await compressImage(file);
+      const formData = new FormData();
+      formData.append('document', compressed);
+
       await api('/donors/profile', {
         method: 'PUT',
         body: formData,
@@ -107,11 +109,12 @@ export default function ProfilePage() {
     const file = e.target.files[0];
     if (!file) return;
 
-    const formData = new FormData();
-    formData.append('document', file);
-
     setIsLoadingUpload(true);
     try {
+      const compressed = await compressImage(file);
+      const formData = new FormData();
+      formData.append('document', compressed);
+
       await api('/orgs/profile', {
         method: 'PUT',
         body: formData,

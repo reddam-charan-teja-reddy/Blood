@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import BloodGroupBadge from '../../components/shared/BloodGroupBadge';
@@ -592,10 +593,10 @@ export default function AdminDashboardPage() {
                       <td style={{ color: '#fff', fontWeight: 600 }}>{req.requesterId?.fullName}</td>
                       <td>{req.requesterId?.phone}</td>
                       <td>
-                        <span className="flex align-center gap-2">
+                        <Link to={`/request/${req._id}`} className="flex align-center gap-2" style={{ textDecoration: 'none', color: 'inherit' }}>
                           <BloodGroupBadge group={req.bloodGroup} />
-                          <span>{req.hospitalName} ({req.hospitalCity})</span>
-                        </span>
+                          <span style={{ textDecoration: 'underline', color: 'var(--primary-color)' }}>{req.hospitalName} ({req.hospitalCity})</span>
+                        </Link>
                       </td>
                       <td>
                         <span className="badge badge-emergency" style={{ animation: 'none' }}>
@@ -608,6 +609,9 @@ export default function AdminDashboardPage() {
                         </span>
                       </td>
                       <td className="flex gap-2">
+                        <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+                          View
+                        </Link>
                         <button 
                           onClick={() => clearFlagsMutation.mutate(req._id)}
                           className="btn btn-success btn-sm flex align-center gap-1"
@@ -663,10 +667,10 @@ export default function AdminDashboardPage() {
                       <td>{disp.filedById?.phone}</td>
                       <td>
                         {disp.interestId?.requestId ? (
-                          <span className="flex align-center gap-2">
+                          <Link to={`/request/${disp.interestId.requestId._id}`} className="flex align-center gap-2" style={{ textDecoration: 'none', color: 'inherit' }}>
                             <BloodGroupBadge group={disp.interestId.requestId.bloodGroup} />
-                            <span>{disp.interestId.requestId.hospitalName} ({disp.interestId.requestId.component})</span>
-                          </span>
+                            <span style={{ textDecoration: 'underline', color: 'var(--primary-color)' }}>{disp.interestId.requestId.hospitalName} ({disp.interestId.requestId.component})</span>
+                          </Link>
                         ) : (
                           <span style={{ color: 'var(--text-muted)' }}>Deleted Request</span>
                         )}
@@ -789,17 +793,22 @@ export default function AdminDashboardPage() {
                           </span>
                         </td>
                         <td>
-                          <button 
-                            onClick={() => {
-                              if (confirm('Are you sure you want to force-cancel this blood request?')) {
-                                cancelOversightRequestMutation.mutate(req._id);
-                              }
-                            }}
-                            className="btn btn-danger btn-sm"
-                            disabled={req.status === 'CANCELLED' || cancelOversightRequestMutation.isPending}
-                          >
-                            Cancel Request
-                          </button>
+                          <div className="flex gap-2">
+                            <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+                              View
+                            </Link>
+                            <button 
+                              onClick={() => {
+                                if (confirm('Are you sure you want to force-cancel this blood request?')) {
+                                  cancelOversightRequestMutation.mutate(req._id);
+                                }
+                              }}
+                              className="btn btn-danger btn-sm"
+                              disabled={req.status === 'CANCELLED' || cancelOversightRequestMutation.isPending}
+                            >
+                              Cancel Request
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
