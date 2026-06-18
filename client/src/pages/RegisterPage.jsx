@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import RoleSelector from '../components/auth/RoleSelector';
 import { User, Phone, Lock, Mail, MapPin, Scale, ChevronRight, ChevronLeft, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { INDIAN_STATES } from '../utils/indianStates';
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ export default function RegisterPage() {
 
   // Form states
   const [fullName, setFullName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('+91');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [bloodGroup, setBloodGroup] = useState('');
@@ -26,6 +27,9 @@ export default function RegisterPage() {
   // OTP states
   const [otp, setOtp] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  // Geolocation — captured silently on form submit
+  const [latitude, setLatitude] = useState(null);
+  const [longitude, setLongitude] = useState(null);
 
   const handleNextStep = (e) => {
     e.preventDefault();
@@ -37,7 +41,6 @@ export default function RegisterPage() {
   const handleRegister = async (e) => {
     e.preventDefault();
 
-    // Validations
     if (!phone.match(/^\+91[6-9]\d{9}$/)) {
       toast.error('Invalid Indian phone number. Format must be +91XXXXXXXXXX');
       return;
@@ -49,6 +52,24 @@ export default function RegisterPage() {
     }
 
     setIsLoading(true);
+
+    // Silently try to capture geolocation for geospatial matching
+    let lat = latitude;
+    let lng = longitude;
+    if (!lat && !lng && navigator.geolocation) {
+      try {
+        const pos = await new Promise((resolve, reject) =>
+          navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 4000 })
+        );
+        lat = pos.coords.latitude;
+        lng = pos.coords.longitude;
+        setLatitude(lat);
+        setLongitude(lng);
+      } catch {
+        // User denied or unavailable — proceed without location
+      }
+    }
+
     try {
       const payload = {
         fullName,
@@ -60,6 +81,8 @@ export default function RegisterPage() {
         state,
         bloodGroup: role === 'INDIVIDUAL' && bloodGroup ? bloodGroup : undefined,
         weightKg: role === 'INDIVIDUAL' && weightKg ? parseFloat(weightKg) : undefined,
+        latitude: lat || undefined,
+        longitude: lng || undefined,
       };
 
       const res = await api('/auth/register', {
@@ -67,7 +90,6 @@ export default function RegisterPage() {
         body: JSON.stringify(payload),
       });
 
-      // After register, send OTP automatically to verify phone
       await api('/auth/otp/send', {
         method: 'POST',
         body: JSON.stringify({ phone }),
@@ -227,14 +249,17 @@ export default function RegisterPage() {
               </div>
               <div className="form-group">
                 <label className="form-label">State</label>
-                <input 
-                  type="text" 
-                  className="form-input" 
-                  placeholder="Andhra Pradesh"
+                <select 
+                  className="form-select"
                   value={state}
                   onChange={(e) => setState(e.target.value)}
                   required
-                />
+                >
+                  <option value="">Choose State...</option>
+                  {INDIAN_STATES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
               </div>
             </div>
 

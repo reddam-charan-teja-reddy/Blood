@@ -1,21 +1,37 @@
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
 import { config } from './config/env.js';
 import { connectDB } from './config/db.js';
+import { startCronJobs } from './services/cron.service.js';
 
 import authRoutes from './routes/auth.routes.js';
 import donorRoutes from './routes/donor.routes.js';
 import requestRoutes from './routes/request.routes.js';
 import orgRoutes from './routes/org.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
 
 const app = express();
 
 // Connect to Database (Only if not in test env)
 if (config.NODE_ENV !== 'test') {
   connectDB();
+  // Start background cron jobs (request auto-expiry, stale reservation cleanup, etc.)
+  startCronJobs();
 }
+
+// Rate Limiting for Auth/OTP routes
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50, // limit each IP to 50 requests per windowMs
+  message: { error: 'Too many requests from this IP, please try again after 15 minutes' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Middleware
 app.use(cors({
@@ -26,6 +42,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// Serve static upload assets
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
 // Request logging middleware
 app.use((req, res, next) => {
   if (config.NODE_ENV !== 'test') {
@@ -35,11 +56,12 @@ app.use((req, res, next) => {
 });
 
 // API Routes
-app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/donors', donorRoutes);
 app.use('/api/v1/requests', requestRoutes);
 app.use('/api/v1/orgs', orgRoutes);
 app.use('/api/v1/admin', adminRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
 
 // Base route for API check
 app.get('/api/v1', (req, res) => {

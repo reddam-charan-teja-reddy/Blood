@@ -43,3 +43,28 @@ export const requireAuth = async (req, res, next) => {
     res.status(500).json({ error: 'Internal server error during authentication' });
   }
 };
+
+export const optionalAuth = async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, config.JWT_SECRET);
+        const user = await User.findById(decoded.userId);
+        if (user && !user.suspended) {
+          req.user = {
+            id: user.id,
+            role: user.role,
+            phone: user.phone,
+          };
+        }
+      } catch (err) {
+        // Ignore token errors for optional authentication
+      }
+    }
+    next();
+  } catch (error) {
+    next();
+  }
+};

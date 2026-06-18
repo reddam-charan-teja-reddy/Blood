@@ -17,6 +17,7 @@ import CreateRequestPage from './pages/CreateRequestPage';
 import RequestDetailPage from './pages/RequestDetailPage';
 import OrgDashboardPage from './pages/org/OrgDashboardPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+import NotificationsPage from './pages/NotificationsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -132,16 +133,19 @@ export default function App() {
                   <CreateRequestPage />
                 </ProtectedRoute>
               } />
-              <Route path="/request/:id" element={
-                <ProtectedRoute>
-                  <RequestDetailPage />
-                </ProtectedRoute>
-              } />
+              <Route path="/request/:id" element={<RequestDetailPage />} />
 
               {/* Org routes */}
               <Route path="/org/dashboard" element={
                 <ProtectedRoute allowedRoles={['ORG']}>
                   <OrgDashboardPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Notifications (all authenticated non-admin users) */}
+              <Route path="/notifications" element={
+                <ProtectedRoute allowedRoles={['INDIVIDUAL', 'ORG']}>
+                  <NotificationsPage />
                 </ProtectedRoute>
               } />
 

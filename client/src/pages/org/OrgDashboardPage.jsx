@@ -5,7 +5,7 @@ import BloodGroupBadge from '../../components/shared/BloodGroupBadge';
 import UrgencyChip from '../../components/shared/UrgencyChip';
 import LoadingSpinner from '../../components/shared/LoadingSpinner';
 import { Link } from 'react-router-dom';
-import { LayoutDashboard, Database, PlusCircle, CheckCircle, Clock, AlertTriangle, Loader2 } from 'lucide-react';
+import { LayoutDashboard, Database, PlusCircle, CheckCircle, Clock, AlertTriangle, Loader2, Search, Heart, Droplets } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function OrgDashboardPage() {
@@ -20,6 +20,43 @@ export default function OrgDashboardPage() {
     refetchInterval: 30000,
   });
 
+  // Query org requests
+  const [requestSearch, setRequestSearch] = useState('');
+  const [requestStatusFilter, setRequestStatusFilter] = useState('');
+  const [requestPage, setRequestPage] = useState(1);
+  const { data: requestsData } = useQuery({
+    queryKey: ['orgRequests'],
+    queryFn: () => api('/orgs/requests'),
+  });
+
+  // Query supply feed — public requests matching org inventory
+  const [activeTab, setActiveTab] = useState('overview');
+  const { data: feedData, isLoading: feedLoading } = useQuery({
+    queryKey: ['orgFeed'],
+    queryFn: () => api('/orgs/feed'),
+    enabled: activeTab === 'feed',
+    staleTime: 30000,
+  });
+
+  // Query inventory logs
+  const { data: inventoryLogs = [] } = useQuery({
+    queryKey: ['orgInventoryLogs'],
+    queryFn: () => api('/orgs/inventory/logs'),
+    refetchInterval: 10000,
+  });
+
+  const allRequests = requestsData?.requests || [];
+  const filteredRequests = allRequests.filter(req => {
+    const matchesSearch = req.bloodGroup.toLowerCase().includes(requestSearch.toLowerCase()) || 
+                          req.hospitalName.toLowerCase().includes(requestSearch.toLowerCase());
+    const matchesStatus = requestStatusFilter ? req.status === requestStatusFilter : true;
+    return matchesSearch && matchesStatus;
+  });
+
+  const PAGE_SIZE = 5;
+  const totalRequestsPages = Math.ceil(filteredRequests.length / PAGE_SIZE) || 1;
+  const paginatedRequests = filteredRequests.slice((requestPage - 1) * PAGE_SIZE, requestPage * PAGE_SIZE);
+
   // Mutation to update blood inventory
   const updateInventoryMutation = useMutation({
     mutationFn: (inventory) => api('/orgs/inventory', { method: 'PUT', body: JSON.stringify({ inventory }) }),
@@ -29,6 +66,16 @@ export default function OrgDashboardPage() {
       setEditingInventory(false);
     },
     onError: (err) => toast.error(err.message || 'Failed to update inventory'),
+  });
+
+  // Mutation for org supply action
+  const supplyMutation = useMutation({
+    mutationFn: (requestId) => api(`/orgs/supply/${requestId}`, { method: 'POST' }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['orgFeed'] });
+      toast.success(data.message || 'Supply offer submitted! The requester will be notified.');
+    },
+    onError: (err) => toast.error(err.message || 'Failed to submit supply offer'),
   });
 
   const handleEditInventory = () => {
@@ -145,51 +192,114 @@ export default function OrgDashboardPage() {
 
       <div className="grid grid-cols-2 gap-6" style={{ gridTemplateColumns: '1.2fr 0.8fr' }}>
         
-        {/* Recent postings table */}
-        <div className="card">
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '1rem', color: '#fff' }}>Recent Postings</h3>
+        {/* Recent postings table with Search, Filter & Pagination */}
+        <div className="card flex flex-col gap-4">
+          <div className="flex justify-between align-center flex-wrap gap-4">
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#fff', marginBottom: 0 }}>Organization Postings</h3>
+            
+            <div className="flex gap-2 align-center flex-wrap">
+              <div className="form-group" style={{ marginBottom: 0, width: '200px' }}>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }}>
+                    <Search size={14} />
+                  </span>
+                  <input 
+                    type="text" 
+                    className="form-input form-input-sm" 
+                    placeholder="Search hospital..." 
+                    value={requestSearch}
+                    onChange={e => { setRequestSearch(e.target.value); setRequestPage(1); }}
+                    style={{ paddingLeft: '2.25rem', fontSize: '0.8125rem', height: '36px' }}
+                  />
+                </div>
+              </div>
+
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <select 
+                  className="form-select form-select-sm"
+                  value={requestStatusFilter}
+                  onChange={e => { setRequestStatusFilter(e.target.value); setRequestPage(1); }}
+                  style={{ fontSize: '0.8125rem', height: '36px' }}
+                >
+                  <option value="">All Statuses</option>
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="PARTIALLY_FULFILLED">PARTIALLY FULFILLED</option>
+                  <option value="FULFILLED">FULFILLED</option>
+                  <option value="CANCELLED">CANCELLED</option>
+                </select>
+              </div>
+            </div>
+          </div>
           
-          {recentRequests.length === 0 ? (
+          {paginatedRequests.length === 0 ? (
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', padding: '2rem 0', textAlign: 'center' }}>
-              No requests posted yet. Use the button above to request blood.
+              No requests matching search criteria.
             </p>
           ) : (
-            <div className="table-wrapper">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Blood</th>
-                    <th>Component</th>
-                    <th>Required By</th>
-                    <th>Urgency</th>
-                    <th>Status</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentRequests.map(req => (
-                    <tr key={req._id}>
-                      <td><BloodGroupBadge group={req.bloodGroup} /></td>
-                      <td style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-                        {req.component === 'WHOLE_BLOOD' ? 'Whole Blood' : req.component === 'PLATELETS' ? 'Platelets' : 'Plasma'}
-                      </td>
-                      <td style={{ fontSize: '0.8125rem' }}>{new Date(req.requiredBy).toLocaleDateString('en-IN')}</td>
-                      <td><UrgencyChip urgency={req.urgency} /></td>
-                      <td>
-                        <span className={`badge ${req.status === 'ACTIVE' ? 'badge-high' : 'badge-success'}`}>
-                          {req.status}
-                        </span>
-                      </td>
-                      <td>
-                        <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>
-                          View
-                        </Link>
-                      </td>
+            <>
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Blood</th>
+                      <th>Component</th>
+                      <th>Required By</th>
+                      <th>Urgency</th>
+                      <th>Status</th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {paginatedRequests.map(req => (
+                      <tr key={req._id}>
+                        <td><BloodGroupBadge group={req.bloodGroup} /></td>
+                        <td style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                          {req.component === 'WHOLE_BLOOD' ? 'Whole Blood' : req.component === 'PLATELETS' ? 'Platelets' : req.component === 'PLASMA' ? 'Plasma' : 'RBC'}
+                        </td>
+                        <td style={{ fontSize: '0.8125rem' }}>{new Date(req.requiredBy).toLocaleDateString('en-IN')}</td>
+                        <td><UrgencyChip urgency={req.urgency} /></td>
+                        <td>
+                          <span className={`badge ${
+                            req.status === 'ACTIVE' ? 'badge-high' : 
+                            req.status === 'PARTIALLY_FULFILLED' ? 'badge-warning' :
+                            req.status === 'FULFILLED' ? 'badge-success' : 'badge-normal'
+                          }`}>
+                            {req.status}
+                          </span>
+                        </td>
+                        <td>
+                          <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>
+                            View
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalRequestsPages > 1 && (
+                <div className="flex justify-between align-center m-t-4" style={{ marginTop: '1rem' }}>
+                  <button 
+                    onClick={() => setRequestPage(p => Math.max(1, p - 1))}
+                    disabled={requestPage === 1}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    ← Prev Page
+                  </button>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                    Page {requestPage} of {totalRequestsPages}
+                  </span>
+                  <button 
+                    onClick={() => setRequestPage(p => Math.min(totalRequestsPages, p + 1))}
+                    disabled={requestPage === totalRequestsPages}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Next Page →
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -254,6 +364,126 @@ export default function OrgDashboardPage() {
               ))}
             </div>
           </form>
+        </div>
+
+        {/* Supply Feed — public requests matching org inventory */}
+        <div className="card" style={{ marginTop: '1.5rem' }}>
+          <div className="flex justify-between align-center m-b-4">
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#fff' }} className="flex align-center gap-2">
+              <Droplets size={18} color="var(--primary-color)" />
+              <span>Supply Feed — Requests You Can Help With</span>
+            </h3>
+            <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+              Based on your current inventory & location
+            </span>
+          </div>
+
+          {feedLoading ? (
+            <div style={{ textAlign: 'center', padding: '2rem' }}>
+              <Loader2 size={24} style={{ animation: 'spin 1s linear infinite', color: 'var(--primary-color)' }} />
+            </div>
+          ) : !feedData ? (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ['orgFeed'] })}
+            >
+              Load Supply Feed
+            </button>
+          ) : feedData.requests?.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+              <Heart size={32} color="var(--text-muted)" style={{ margin: '0 auto 0.75rem' }} />
+              <p style={{ fontWeight: 600, color: '#fff', marginBottom: '0.5rem' }}>No matching requests right now</p>
+              <p style={{ fontSize: '0.875rem' }}>
+                {feedData.message || 'Update your inventory or wait for new requests to be posted near your location.'}
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {feedData.requests.map(req => (
+                <div key={req._id} className="flex align-center justify-between p-3 gap-4" style={{
+                  backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                  borderRadius: 'var(--radius-sm)',
+                  border: req.urgency === 'EMERGENCY' ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid var(--border-color)',
+                  flexWrap: 'wrap',
+                }}>
+                  <div className="flex align-center gap-3">
+                    <BloodGroupBadge group={req.bloodGroup} />
+                    <div>
+                      <p style={{ fontWeight: 700, color: '#fff', fontSize: '0.9375rem' }}>
+                        {req.unitsNeeded} unit(s) at {req.hospitalName}
+                      </p>
+                      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                        {req.hospitalCity}, {req.hospitalState} · Needed by {new Date(req.requiredBy).toLocaleDateString('en-IN')}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex align-center gap-2">
+                    <UrgencyChip urgency={req.urgency} />
+                    <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>
+                      Details
+                    </Link>
+                    <button
+                      className="btn btn-primary btn-sm flex align-center gap-1"
+                      style={{ fontSize: '0.8125rem' }}
+                      onClick={() => supplyMutation.mutate(req._id)}
+                      disabled={supplyMutation.isPending}
+                    >
+                      <Droplets size={14} />
+                      Offer to Supply
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Inventory Logs Panel */}
+        <div className="card" style={{ marginTop: '1.5rem', height: 'fit-content' }}>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '1rem', color: '#fff' }} className="flex align-center gap-2">
+            <Clock size={18} color="var(--primary-color)" />
+            <span>Recent Inventory Logs</span>
+          </h3>
+          {inventoryLogs.length === 0 ? (
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', padding: '1rem 0', textAlign: 'center' }}>
+              No inventory adjustments logged yet.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '250px', overflowY: 'auto', paddingRight: '0.25rem' }}>
+              {inventoryLogs.map(log => {
+                const isPositive = log.delta > 0;
+                return (
+                  <div key={log._id} className="flex align-center justify-between p-2" style={{
+                    backgroundColor: 'rgba(15, 23, 42, 0.3)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.8125rem'
+                  }}>
+                    <div className="flex align-center gap-2">
+                      <span className="flex align-center justify-center" style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        backgroundColor: isPositive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                        color: isPositive ? 'var(--success-color)' : 'var(--primary-color)',
+                        fontWeight: 700,
+                        fontSize: '0.75rem'
+                      }}>
+                        {isPositive ? '+' : ''}{log.delta}
+                      </span>
+                      <div>
+                        <strong style={{ color: '#fff' }}>{log.bloodGroup}</strong>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{log.reason}</p>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                      {new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
       </div>

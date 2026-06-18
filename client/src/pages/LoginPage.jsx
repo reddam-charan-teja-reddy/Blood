@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import { Phone, Lock, Mail, ArrowRight, Eye, EyeOff, Loader2 } from 'lucide-react';
@@ -7,10 +7,11 @@ import toast from 'react-hot-toast';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const setAuth = useAuthStore((state) => state.setAuth);
 
   const [identifierType, setIdentifierType] = useState('phone'); // 'phone' or 'email'
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState('+91');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -41,8 +42,11 @@ export default function LoginPage() {
         setAuth(res.user, res.accessToken);
         toast.success(`Welcome back, ${res.user.fullName}!`);
         
-        // Redirect based on role
-        if (res.user.role === 'ADMIN') {
+        // Redirect based on role or original URL
+        const redirectPath = location.state?.from;
+        if (redirectPath) {
+          navigate(redirectPath, { replace: true });
+        } else if (res.user.role === 'ADMIN') {
           navigate('/admin/dashboard');
         } else if (res.user.role === 'ORG') {
           navigate('/org/dashboard');
@@ -97,7 +101,10 @@ export default function LoginPage() {
       setAuth(res.user, res.accessToken);
       toast.success(`Welcome back, ${res.user.fullName}!`);
 
-      if (res.user.role === 'ADMIN') {
+      const redirectPath = location.state?.from;
+      if (redirectPath) {
+        navigate(redirectPath, { replace: true });
+      } else if (res.user.role === 'ADMIN') {
         navigate('/admin/dashboard');
       } else if (res.user.role === 'ORG') {
         navigate('/org/dashboard');

@@ -1,4 +1,12 @@
+import twilio from 'twilio';
+import { config } from '../config/env.js';
+
 const otpStore = new Map(); // Map<key, { otp, expiresAt }>
+
+let twilioClient = null;
+if (config.TWILIO_ACCOUNT_SID && config.TWILIO_AUTH_TOKEN) {
+  twilioClient = twilio(config.TWILIO_ACCOUNT_SID, config.TWILIO_AUTH_TOKEN);
+}
 
 function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
@@ -15,12 +23,27 @@ export function sendOTP(identifier, purpose = 'AUTH') {
   });
 
   console.log(`\n========================================`);
-  console.log(`[MOCK OTP SERVICE]`);
+  console.log(`[OTP SERVICE]`);
   console.log(`Purpose: ${purpose}`);
   console.log(`Target: ${identifier}`);
   console.log(`OTP Code: ${otp}`);
   console.log(`Expires in: ${ttl / 1000 / 60} minutes`);
   console.log(`========================================\n`);
+
+  if (twilioClient && config.TWILIO_PHONE_NUMBER) {
+    const messageBody = purpose === 'CONTACT_REVEAL'
+      ? `🩸 Blood Network: Enter OTP ${otp} to verify and reveal contact details. Exp in 15 mins.`
+      : `🩸 Blood Network: Your login OTP is ${otp}. Exp in 10 mins.`;
+
+    twilioClient.messages
+      .create({
+        body: messageBody,
+        from: config.TWILIO_PHONE_NUMBER,
+        to: identifier
+      })
+      .then(message => console.log(`[Twilio SMS Sent] SID: ${message.sid}`))
+      .catch(err => console.error(`[Twilio SMS Error]`, err));
+  }
 
   return { sent: true, otp }; // Return OTP for testing/seeding convenience if needed, but primarily logs to console
 }

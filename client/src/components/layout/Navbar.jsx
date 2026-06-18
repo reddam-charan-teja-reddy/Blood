@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import { Activity, User as UserIcon, LogOut, Menu, X, PlusCircle, LayoutDashboard, Heart } from 'lucide-react';
+import { Activity, User as UserIcon, LogOut, Menu, X, PlusCircle, Bell } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 export default function Navbar() {
@@ -10,6 +11,17 @@ export default function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Fetch unread notification count (poll every 60s)
+  const { data: notifData } = useQuery({
+    queryKey: ['notifications-unread'],
+    queryFn: () => api('/notifications?unreadOnly=true'),
+    enabled: isAuthenticated && user?.role !== 'ADMIN',
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+  const unreadCount = notifData?.unreadCount || 0;
+
 
   const handleLogout = async () => {
     try {
@@ -73,6 +85,36 @@ export default function Navbar() {
                 <Link to="/request/new" className="btn btn-primary btn-sm flex align-center gap-1" style={{ padding: '0.4rem 0.8rem', fontSize: '0.875rem' }}>
                   <PlusCircle size={16} />
                   <span>Request Blood</span>
+                </Link>
+              )}
+
+              {/* Notification Bell */}
+              {user?.role !== 'ADMIN' && (
+                <Link
+                  to="/notifications"
+                  title="Notifications"
+                  style={{ position: 'relative', display: 'flex', alignItems: 'center' }}
+                >
+                  <Bell size={20} color={unreadCount > 0 ? '#ef4444' : 'var(--text-secondary)'} />
+                  {unreadCount > 0 && (
+                    <span style={{
+                      position: 'absolute',
+                      top: '-6px',
+                      right: '-8px',
+                      background: '#ef4444',
+                      color: '#fff',
+                      borderRadius: '50%',
+                      width: '18px',
+                      height: '18px',
+                      fontSize: '0.6rem',
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
                 </Link>
               )}
 

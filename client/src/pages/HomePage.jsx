@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
 import RequestCard from '../components/request/RequestCard';
@@ -8,10 +8,14 @@ import TrustBadge from '../components/shared/TrustBadge';
 import LoadingSpinner from '../components/shared/LoadingSpinner';
 import { Search, SlidersHorizontal, Heart, MapPin, Award, PlusCircle, CheckCircle, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import toast from 'react-hot-toast';
 
 export default function HomePage() {
   const { user } = useAuthStore();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('donate'); // 'donate' or 'find'
+  const [selectedDonorForRequest, setSelectedDonorForRequest] = useState(null);
+  const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
 
   // Fetch donor profile to get default filters (city, bloodGroup)
   const { data: profile } = useQuery({
@@ -19,6 +23,50 @@ export default function HomePage() {
     queryFn: () => api('/donors/profile'),
     enabled: user?.role === 'INDIVIDUAL',
   });
+
+  // Fetch user's own requests to associate with contact requests
+  const { data: myRequests = [] } = useQuery({
+    queryKey: ['myRequests'],
+    queryFn: () => api('/auth/history/requests'),
+    enabled: !!user,
+  });
+
+  const myActiveRequests = myRequests.filter(r => ['ACTIVE', 'PARTIALLY_FULFILLED'].includes(r.status));
+
+  const maskName = (fullName) => {
+    return fullName || '';
+  };
+
+  const requestDonorMutation = useMutation({
+    mutationFn: ({ requestId, donorUserId }) => api(`/requests/${requestId}/request-donor/${donorUserId}`, { method: 'POST' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['donors'] });
+      queryClient.invalidateQueries({ queryKey: ['myRequests'] });
+      toast.success('Contact request sent! Donor will be notified.');
+      setIsRequestModalOpen(false);
+      setSelectedDonorForRequest(null);
+    },
+    onError: (err) => {
+      toast.error(err.message || 'Failed to send contact request');
+    }
+  });
+
+  const handleRequestContact = (donor) => {
+    if (myActiveRequests.length === 0) {
+      toast.error('You must post an active blood request first to request donor contact.');
+      return;
+    }
+
+    if (myActiveRequests.length === 1) {
+      requestDonorMutation.mutate({
+        requestId: myActiveRequests[0]._id,
+        donorUserId: donor.userId._id
+      });
+    } else {
+      setSelectedDonorForRequest(donor);
+      setIsRequestModalOpen(true);
+    }
+  };
 
   // Request Filters state
   const [bloodGroup, setBloodGroup] = useState('');
@@ -285,12 +333,12 @@ export default function HomePage() {
                       color: '#fff',
                       fontWeight: 800
                     }}>
-                      {donor.userId.fullName.substring(0, 2).toUpperCase()}
+                      {maskName(donor.userId?.fullName).substring(0, 2).toUpperCase()}
                     </div>
                     <div>
                       <div className="flex align-center gap-2">
                         <h4 style={{ fontWeight: 700, color: '#fff' }}>
-                          {donor.userId.fullName.split(' ')[0]}
+                          {maskName(donor.userId?.fullName)}
                         </h4>
                         <span style={{
                           width: '8px',
@@ -326,18 +374,79 @@ export default function HomePage() {
                     </div>
                   </div>
 
-                  <div className="flex justify-between align-center" style={{
+                  <div className="flex flex-col gap-2" style={{
                     borderTop: '1px solid var(--border-color)',
-                    paddingTop: '0.75rem',
-                    fontSize: '0.8125rem'
+                    paddingTop: '0.75rem'
                   }}>
-                    <TrustBadge verified={donor.bloodGroupVerified} totalDonations={donor.totalDonations} />
-                    <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Active nearby</span>
+                    <div className="flex justify-between align-center" style={{ fontSize: '0.8125rem' }}>
+                      <TrustBadge verified={donor.bloodGroupVerified} totalDonations={donor.totalDonations} />
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Active nearby</span>
+                    </div>
+                    {donor.contactRequested ? (
+                      <button 
+                        className="btn btn-secondary btn-sm"
+                        style={{ width: '100%', marginTop: '0.25rem', cursor: 'not-allowed' }}
+                        disabled
+                      >
+                        Requested
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={() => handleRequestContact(donor)}
+                        className="btn btn-primary btn-sm"
+                        style={{ width: '100%', marginTop: '0.25rem' }}
+                        disabled={requestDonorMutation.isPending}
+                      >
+                        Request Contact
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Request Donor Selection Modal */}
+      {isRequestModalOpen && selectedDonorForRequest && (
+        <div className="modal-overlay">
+          <div className="modal-content card" style={{ backgroundColor: 'var(--surface-color)', maxWidth: '450px' }}>
+            <h3 style={{ fontWeight: 700, color: '#fff', marginBottom: '1rem' }}>Select Blood Request</h3>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Select which of your active requests you would like to invite <strong>{maskName(selectedDonorForRequest.userId?.fullName)}</strong> to help with:
+            </p>
+            <div className="flex flex-col gap-3" style={{ marginBottom: '1.5rem' }}>
+              {myActiveRequests.map((req) => (
+                <button
+                  key={req._id}
+                  type="button"
+                  onClick={() => {
+                    requestDonorMutation.mutate({
+                      requestId: req._id,
+                      donorUserId: selectedDonorForRequest.userId._id
+                    });
+                  }}
+                  className="btn btn-secondary"
+                  style={{ justifyContent: 'flex-start', padding: '1rem', width: '100%', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}
+                  disabled={requestDonorMutation.isPending}
+                >
+                  <div style={{ fontWeight: 700, color: '#fff' }}>{req.bloodGroup} Needed ({req.component})</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Hospital: {req.hospitalName}</div>
+                </button>
+              ))}
+            </div>
+            <button 
+              onClick={() => {
+                setIsRequestModalOpen(false);
+                setSelectedDonorForRequest(null);
+              }} 
+              className="btn btn-secondary" 
+              style={{ width: '100%' }}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
     </div>

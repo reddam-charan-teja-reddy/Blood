@@ -2,11 +2,13 @@ import { User } from '../models/User.js';
 import { DonorProfile } from '../models/DonorProfile.js';
 import { OrgProfile } from '../models/OrgProfile.js';
 import { BloodRequest } from '../models/BloodRequest.js';
+import { DonorInterest } from '../models/DonorInterest.js';
+import { Dispute } from '../models/Dispute.js';
 
 export const getStats = async (req, res, next) => {
   try {
     const activeRequests = await BloodRequest.countDocuments({
-      status: 'ACTIVE',
+      status: { $in: ['ACTIVE', 'PARTIALLY_FULFILLED'] },
       expiresAt: { $gt: new Date() },
     });
 
@@ -44,35 +46,94 @@ export const getStats = async (req, res, next) => {
 
 export const getStatsHistory = async (req, res, next) => {
   try {
-    // Generate simple aggregation or mock daily stats for the last 30 days
-    const mockRequestHistory = [
-      { name: 'O+', requests: 12 },
-      { name: 'O-', requests: 5 },
-      { name: 'A+', requests: 8 },
-      { name: 'A-', requests: 2 },
-      { name: 'B+', requests: 9 },
-      { name: 'B-', requests: 1 },
-      { name: 'AB+', requests: 4 },
-      { name: 'AB-', requests: 1 },
-    ];
+    /**
+     * Real blood-group distribution from actual BloodRequest records.
+     * Groups every request by bloodGroup and counts them.
+     * Replaces the previous hardcoded mock data with Math.random() rates.
+     */
+    const bloodGroupRequests = await BloodRequest.aggregate([
+      {
+        $group: {
+          _id: '$bloodGroup',
+          requests: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          name: '$_id',
+          requests: 1,
+        },
+      },
+      { $sort: { requests: -1 } },
+    ]);
 
-    const mockFulfillmentRate = Array.from({ length: 30 }).map((_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (29 - i));
-      return {
-        date: date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-        rate: Math.floor(60 + Math.random() * 30), // 60% to 90%
-      };
+    /**
+     * Real 30-day fulfillment rate trend.
+     * For each of the last 30 days we compute:
+     *   rate = (fulfilled_on_that_day / created_on_that_day) * 100
+     * If a day has zero created requests, rate is reported as 0.
+     */
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 29);
+    thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+    // Requests created per day in the window
+    const createdPerDay = await BloodRequest.aggregate([
+      { $match: { createdAt: { $gte: thirtyDaysAgo } } },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Kolkata' },
+          },
+          total: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Requests fulfilled per day in the window
+    const fulfilledPerDay = await BloodRequest.aggregate([
+      {
+        $match: {
+          status: 'FULFILLED',
+          fulfilledAt: { $gte: thirtyDaysAgo },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: '%Y-%m-%d', date: '$fulfilledAt', timezone: 'Asia/Kolkata' },
+          },
+          fulfilled: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Build lookup maps
+    const createdMap = Object.fromEntries(createdPerDay.map((d) => [d._id, d.total]));
+    const fulfilledMap = Object.fromEntries(fulfilledPerDay.map((d) => [d._id, d.fulfilled]));
+
+    // Produce a continuous 30-day array
+    const fulfillmentRate = Array.from({ length: 30 }).map((_, i) => {
+      const date = new Date(thirtyDaysAgo);
+      date.setDate(date.getDate() + i);
+      const key = date.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+      const label = date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+      const total = createdMap[key] ?? 0;
+      const fulfilled = fulfilledMap[key] ?? 0;
+      const rate = total > 0 ? Math.round((fulfilled / total) * 100) : 0;
+      return { date: label, rate };
     });
 
     res.json({
-      bloodGroupRequests: mockRequestHistory,
-      fulfillmentRate: mockFulfillmentRate,
+      bloodGroupRequests,
+      fulfillmentRate,
     });
   } catch (error) {
     next(error);
   }
 };
+
 
 export const getPendingOrgs = async (req, res, next) => {
   try {
@@ -112,6 +173,7 @@ export const rejectOrg = async (req, res, next) => {
     }
 
     orgProfile.verificationStatus = 'REJECTED';
+    orgProfile.documentPath = undefined; // clear rejected document
     await orgProfile.save();
 
     res.json({ success: true, message: 'Organization verification rejected' });
@@ -139,7 +201,7 @@ export const getUsers = async (req, res, next) => {
       if (status === 'active') filter.suspended = false;
     }
 
-    const users = await User.find(filter).lean();
+    const users = await User.find(filter).select('-passwordHash').lean();
     res.json(users);
   } catch (error) {
     next(error);
@@ -149,7 +211,7 @@ export const getUsers = async (req, res, next) => {
 export const getUserById = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const user = await User.findById(id).lean();
+    const user = await User.findById(id).select('-passwordHash').lean();
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
@@ -229,13 +291,34 @@ export const clearNoShows = async (req, res, next) => {
 
 export const getPendingProofs = async (req, res, next) => {
   try {
+    /**
+     * Only return donors who have BOTH:
+     *   a) a blood group set
+     *   b) a document uploaded (documentPath exists and is not null)
+     *
+     * Previously this returned all unverified donors including those who
+     * just selected a blood group at signup with no document attached \u2014
+     * giving admin an empty/useless verification queue.
+     */
     const pendingProofs = await DonorProfile.find({
       bloodGroup: { $exists: true, $ne: null },
       bloodGroupVerified: false,
+      documentPath: { $exists: true, $ne: null },
     }).populate('userId', 'fullName phone').lean();
 
-    res.json(pendingProofs);
+    // Compute the full document URL for admin to click through
+    const origin = process.env.CLIENT_URL
+      ? process.env.CLIENT_URL.replace('/api/v1', '')
+      : 'http://localhost:5000';
+
+    const proofsWithUrl = pendingProofs.map((p) => ({
+      ...p,
+      documentUrl: p.documentPath ? `${origin}${p.documentPath}` : null,
+    }));
+
+    res.json(proofsWithUrl);
   } catch (error) {
+
     next(error);
   }
 };
@@ -267,6 +350,7 @@ export const rejectProof = async (req, res, next) => {
 
     profile.bloodGroupVerified = false;
     profile.bloodGroup = undefined; // reset blood group
+    profile.documentPath = undefined; // clear rejected document
     await profile.save();
 
     res.json({ success: true, message: 'Blood group proof rejected' });
@@ -320,6 +404,137 @@ export const cancelFlaggedRequest = async (req, res, next) => {
     await request.save();
 
     res.json({ success: true, message: 'Request force-cancelled by admin' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getDisputes = async (req, res, next) => {
+  try {
+    const disputes = await Dispute.find()
+      .populate('filedById', 'fullName phone')
+      .populate({
+        path: 'interestId',
+        populate: {
+          path: 'requestId',
+          select: 'hospitalName bloodGroup component'
+        }
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json(disputes);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resolveDispute = async (req, res, next) => {
+  try {
+    const { disputeId } = req.params;
+    const { status } = req.body; // 'RESOLVED' or 'OVERTURNED'
+
+    if (!['RESOLVED', 'OVERTURNED'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid dispute status resolution. Must be RESOLVED or OVERTURNED.' });
+    }
+
+    const dispute = await Dispute.findById(disputeId);
+    if (!dispute) {
+      return res.status(404).json({ error: 'Dispute not found' });
+    }
+
+    dispute.status = status;
+    await dispute.save();
+
+    if (status === 'OVERTURNED') {
+      const donorProfile = await DonorProfile.findOne({ userId: dispute.filedById });
+      if (donorProfile && donorProfile.noShowCount > 0) {
+        donorProfile.noShowCount -= 1;
+        await donorProfile.save();
+      }
+    }
+
+    res.json({ success: true, dispute });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getAllRequests = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 10, search = '', status, urgency, requesterType } = req.query;
+    const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    const query = {};
+
+    if (search) {
+      /**
+       * SECURITY — Escape regex special characters in the search term before
+       * embedding it in a $regex query.  Without escaping, a user could send
+       * "search=.*" or "search=(a+)+" to cause catastrophic backtracking (ReDoS)
+       * or bypass intended prefix-match semantics.
+       */
+      const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { hospitalName: { $regex: escaped, $options: 'i' } },
+        { hospitalCity: { $regex: escaped, $options: 'i' } },
+        { bloodGroup: { $regex: `^${escaped}$`, $options: 'i' } }, // exact match for blood group
+      ];
+    }
+
+    // Optional filters for admin dashboard table
+    if (status) query.status = status;
+    if (urgency) query.urgency = urgency;
+    if (requesterType) query.requesterType = requesterType;
+
+    const total = await BloodRequest.countDocuments(query);
+    const requests = await BloodRequest.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit, 10))
+      .populate('requesterId', 'fullName phone role')
+      .lean();
+
+    res.json({
+      requests,
+      pagination: {
+        total,
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10),
+        pages: Math.ceil(total / parseInt(limit, 10)),
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Admin-only view of a single blood request with full detail:
+ * - All sensitive fields (ward, doctor, guardian phone)
+ * - Uploaded medical document path (served from /uploads)
+ * - All donor interests on this request with donor identity
+ * - Flag history (flaggedBy array)
+ */
+export const getRequestByIdAdmin = async (req, res, next) => {
+  try {
+    const { requestId } = req.params;
+    const request = await BloodRequest.findById(requestId)
+      .populate('requesterId', 'fullName phone email role')
+      .populate('flaggedBy', 'fullName phone')
+      .lean();
+
+    if (!request) {
+      return res.status(404).json({ error: 'Request not found' });
+    }
+
+    // Fetch all donor interests with donor identity (admin sees everything)
+    const interests = await DonorInterest.find({ requestId })
+      .populate('donorId', 'fullName phone')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ request, interests });
   } catch (error) {
     next(error);
   }

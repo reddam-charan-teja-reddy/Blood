@@ -15,6 +15,7 @@ const DonorInterestSchema = new mongoose.Schema({
     type: String,
     enum: [
       'INTERESTED',
+      'RESERVED',
       'REVEAL_PENDING',
       'CONTACT_REVEALED',
       'CONFIRMED',
@@ -32,11 +33,22 @@ const DonorInterestSchema = new mongoose.Schema({
   contactRevealedAt: {
     type: Date,
   },
+  reservedAt: {
+    type: Date,
+  },
   outcomeReportedAt: {
     type: Date,
   },
   outcomeReason: {
     type: String, // Reason if turned away or declined
+  },
+  donorOutcome: {
+    type: String,
+    enum: ['DONATED', 'TURNED_AWAY', 'NO_SHOW', 'DECLINED'],
+  },
+  requesterOutcome: {
+    type: String,
+    enum: ['DONATED', 'TURNED_AWAY', 'NO_SHOW', 'DECLINED'],
   },
 }, {
   timestamps: true,

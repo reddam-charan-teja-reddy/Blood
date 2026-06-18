@@ -18,7 +18,12 @@ export async function api(endpoint, options = {}) {
   });
 
   // Attempt token refresh on 401
-  if (response.status === 401) {
+  const isAuthAction = endpoint.includes('/auth/login') || 
+                       endpoint.includes('/auth/otp/') || 
+                       endpoint.includes('/auth/refresh') || 
+                       endpoint.includes('/auth/register');
+
+  if (response.status === 401 && !isAuthAction) {
     try {
       const refreshRes = await fetch(`${BASE_URL}/auth/refresh`, {
         method: 'POST',

@@ -17,6 +17,14 @@ export default function AdminDashboardPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState('overview'); // overview, orgs, users, proofs, flags
   const [userSearch, setUserSearch] = useState('');
+  const [previewPath, setPreviewPath] = useState(null);
+  const [previewTitle, setPreviewTitle] = useState('');
+
+  const getDocumentUrl = (path) => {
+    if (!path) return '';
+    const origin = (import.meta.env.VITE_API_URL || 'http://localhost:5000/api/v1').replace('/api/v1', '');
+    return `${origin}${path}`;
+  };
 
   // 1. Query general stats
   const { data: stats, isLoading: statsLoading } = useQuery({
@@ -58,6 +66,22 @@ export default function AdminDashboardPage() {
     queryKey: ['flaggedRequests'],
     queryFn: () => api('/admin/flags'),
     enabled: activeTab === 'flags',
+  });
+
+  // 7. Query disputes list
+  const { data: disputes = [], isLoading: disputesLoading } = useQuery({
+    queryKey: ['adminDisputes'],
+    queryFn: () => api('/admin/disputes'),
+    enabled: activeTab === 'disputes',
+  });
+
+  // 8. Query all requests for oversight feed (with search & pagination state)
+  const [oversightPage, setOversightPage] = useState(1);
+  const [oversightSearch, setOversightSearch] = useState('');
+  const { data: oversightData, isLoading: oversightLoading } = useQuery({
+    queryKey: ['adminOversight', oversightPage, oversightSearch],
+    queryFn: () => api(`/admin/requests?page=${oversightPage}&limit=10&search=${encodeURIComponent(oversightSearch)}`),
+    enabled: activeTab === 'oversight',
   });
 
   // MUTATIONS
@@ -143,6 +167,27 @@ export default function AdminDashboardPage() {
     },
   });
 
+  const resolveDisputeMutation = useMutation({
+    mutationFn: ({ disputeId, status }) => api(`/admin/disputes/${disputeId}/resolve`, {
+      method: 'PUT',
+      body: JSON.stringify({ status }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['adminDisputes'] });
+      toast.success('Dispute resolved successfully!');
+    },
+    onError: (err) => toast.error(err.message || 'Failed to resolve dispute'),
+  });
+
+  const cancelOversightRequestMutation = useMutation({
+    mutationFn: (requestId) => api(`/requests/${requestId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['adminOversight'] });
+      toast.success('Request cancelled successfully');
+    },
+    onError: (err) => toast.error(err.message || 'Failed to cancel request'),
+  });
+
   return (
     <div className="fadeIn">
       {/* Welcome admin banner */}
@@ -213,6 +258,12 @@ export default function AdminDashboardPage() {
         </button>
         <button onClick={() => setActiveTab('flags')} className={`tab-btn ${activeTab === 'flags' ? 'active' : ''}`}>
           Flagged Requests
+        </button>
+        <button onClick={() => setActiveTab('disputes')} className={`tab-btn ${activeTab === 'disputes' ? 'active' : ''}`}>
+          Disputes Queue
+        </button>
+        <button onClick={() => setActiveTab('oversight')} className={`tab-btn ${activeTab === 'oversight' ? 'active' : ''}`}>
+          Oversight Feed
         </button>
       </div>
 
@@ -286,7 +337,23 @@ export default function AdminDashboardPage() {
                   {pendingOrgs.map(org => (
                     <tr key={org._id}>
                       <td style={{ color: '#fff', fontWeight: 600 }}>{org.orgName}</td>
-                      <td>{org.registrationNo}</td>
+                      <td>
+                        <span className="flex align-center gap-2">
+                          <span>{org.registrationNo}</span>
+                          {org.documentPath && (
+                            <button 
+                              onClick={() => {
+                                setPreviewPath(org.documentPath);
+                                setPreviewTitle(`${org.orgName} License`);
+                              }}
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '0.125rem 0.375rem', fontSize: '0.75rem' }}
+                            >
+                              View License
+                            </button>
+                          )}
+                        </span>
+                      </td>
                       <td>{org.orgType}</td>
                       <td>{org.city}, {org.state}</td>
                       <td>{org.userId?.phone}</td>
@@ -453,7 +520,23 @@ export default function AdminDashboardPage() {
                     <tr key={proof._id}>
                       <td style={{ color: '#fff', fontWeight: 600 }}>{proof.userId?.fullName}</td>
                       <td>{proof.userId?.phone}</td>
-                      <td><BloodGroupBadge group={proof.bloodGroup} /></td>
+                      <td>
+                        <span className="flex align-center gap-2">
+                          <BloodGroupBadge group={proof.bloodGroup} />
+                          {proof.documentPath && (
+                            <button 
+                              onClick={() => {
+                                setPreviewPath(proof.documentPath);
+                                setPreviewTitle(`${proof.userId?.fullName} Proof`);
+                              }}
+                              className="btn btn-secondary btn-sm"
+                              style={{ padding: '0.125rem 0.375rem', fontSize: '0.75rem' }}
+                            >
+                              View Proof
+                            </button>
+                          )}
+                        </span>
+                      </td>
                       <td>{proof.city}, {proof.state}</td>
                       <td className="flex gap-2">
                         <button 
@@ -547,6 +630,240 @@ export default function AdminDashboardPage() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 6: DISPUTES QUEUE */}
+      {activeTab === 'disputes' && (
+        <div className="card">
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#fff', marginBottom: '1rem' }}>No-Show Penalties Disputes</h3>
+          {disputesLoading ? (
+            <LoadingSpinner />
+          ) : (!Array.isArray(disputes) || disputes.length === 0) ? (
+            <p style={{ color: 'var(--text-secondary)', padding: '2rem 0', textAlign: 'center' }}>
+              No active disputes pending review.
+            </p>
+          ) : (
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Donor Name</th>
+                    <th>Phone</th>
+                    <th>Request Context</th>
+                    <th>Reason details</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {disputes.map(disp => (
+                    <tr key={disp._id}>
+                      <td style={{ color: '#fff', fontWeight: 600 }}>{disp.filedById?.fullName}</td>
+                      <td>{disp.filedById?.phone}</td>
+                      <td>
+                        {disp.interestId?.requestId ? (
+                          <span className="flex align-center gap-2">
+                            <BloodGroupBadge group={disp.interestId.requestId.bloodGroup} />
+                            <span>{disp.interestId.requestId.hospitalName} ({disp.interestId.requestId.component})</span>
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)' }}>Deleted Request</span>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ maxWidth: '250px', fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                          <strong>Reason:</strong> {disp.reason}
+                          {disp.evidence && <div style={{ marginTop: '0.25rem', color: 'var(--primary-color)' }}><strong>Evidence:</strong> {disp.evidence}</div>}
+                        </div>
+                      </td>
+                      <td>
+                        <span className={`badge ${disp.status === 'OPEN' ? 'badge-emergency' : disp.status === 'OVERTURNED' ? 'badge-success' : 'badge-normal'}`}>
+                          {disp.status}
+                        </span>
+                      </td>
+                      <td className="flex gap-2">
+                        {disp.status === 'OPEN' ? (
+                          <>
+                            <button 
+                              onClick={() => resolveDisputeMutation.mutate({ disputeId: disp._id, status: 'OVERTURNED' })}
+                              className="btn btn-success btn-sm flex align-center gap-1"
+                            >
+                              <Check size={12} />
+                              <span>Overturn Penalty</span>
+                            </button>
+                            <button 
+                              onClick={() => resolveDisputeMutation.mutate({ disputeId: disp._id, status: 'RESOLVED' })}
+                              className="btn btn-danger btn-sm flex align-center gap-1"
+                            >
+                              <X size={12} />
+                              <span>Uphold Penalty</span>
+                            </button>
+                          </>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>Resolved</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 7: OVERSIGHT FEED */}
+      {activeTab === 'oversight' && (
+        <div className="card flex flex-col gap-4">
+          <div className="flex justify-between align-center flex-wrap gap-4">
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#fff' }}>Platform Oversight Control Feed</h3>
+            
+            {/* Search Input */}
+            <div className="form-group" style={{ marginBottom: 0, width: '280px' }}>
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }}>
+                  <Search size={16} />
+                </span>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Search city or hospital..." 
+                  value={oversightSearch}
+                  onChange={e => { setOversightSearch(e.target.value); setOversightPage(1); }}
+                  style={{ paddingLeft: '2.5rem' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {oversightLoading ? (
+            <LoadingSpinner />
+          ) : (!oversightData?.requests || oversightData.requests.length === 0) ? (
+            <p style={{ color: 'var(--text-secondary)', padding: '2rem 0', textAlign: 'center' }}>
+              No requests found matching oversight criteria.
+            </p>
+          ) : (
+            <>
+              <div className="table-wrapper">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Patient/Requester</th>
+                      <th>Location / Hospital</th>
+                      <th>Units Required</th>
+                      <th>Urgency</th>
+                      <th>Status</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {oversightData.requests.map(req => (
+                      <tr key={req._id}>
+                        <td style={{ color: '#fff', fontWeight: 600 }}>
+                          <div>{req.requesterId?.fullName || 'Anonymous User'}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{req.requesterId?.phone}</div>
+                        </td>
+                        <td>
+                          <div>{req.hospitalName}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{req.hospitalCity}, {req.hospitalState}</div>
+                        </td>
+                        <td>
+                          <span className="flex align-center gap-2">
+                            <BloodGroupBadge group={req.bloodGroup} />
+                            <span>{req.unitsNeeded} units ({req.component})</span>
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge ${req.urgency === 'EMERGENCY' ? 'badge-emergency' : req.urgency === 'HIGH' ? 'badge-high' : 'badge-normal'}`}>
+                            {req.urgency}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge ${
+                            req.status === 'ACTIVE' ? 'badge-success' : 
+                            req.status === 'FULFILLED' ? 'badge-success' : 
+                            req.status === 'CANCELLED' ? 'badge-normal' : 'badge-high'
+                          }`}>
+                            {req.status}
+                          </span>
+                        </td>
+                        <td>
+                          <button 
+                            onClick={() => {
+                              if (confirm('Are you sure you want to force-cancel this blood request?')) {
+                                cancelOversightRequestMutation.mutate(req._id);
+                              }
+                            }}
+                            className="btn btn-danger btn-sm"
+                            disabled={req.status === 'CANCELLED' || cancelOversightRequestMutation.isPending}
+                          >
+                            Cancel Request
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination controls */}
+              {oversightData.pagination?.pages > 1 && (
+                <div className="flex justify-between align-center m-t-4" style={{ marginTop: '1rem' }}>
+                  <button 
+                    onClick={() => setOversightPage(p => Math.max(1, p - 1))}
+                    disabled={oversightPage === 1}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    ← Previous Page
+                  </button>
+                  <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                    Page {oversightPage} of {oversightData.pagination.pages}
+                  </span>
+                  <button 
+                    onClick={() => setOversightPage(p => Math.min(oversightData.pagination.pages, p + 1))}
+                    disabled={oversightPage === oversightData.pagination.pages}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Next Page →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Document Preview Modal */}
+      {previewPath && (
+        <div className="modal-overlay">
+          <div className="modal-content card" style={{ maxWidth: '600px', backgroundColor: 'var(--surface-color)' }}>
+            <div className="flex justify-between align-center m-b-4" style={{ marginBottom: '1rem' }}>
+              <h3 style={{ fontWeight: 700, color: '#fff' }}>{previewTitle}</h3>
+              <button 
+                onClick={() => setPreviewPath(null)}
+                className="btn btn-secondary btn-sm"
+                style={{ minWidth: '40px', padding: '0.25rem 0.5rem' }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ minHeight: '300px', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0b0f19', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+              {previewPath.toLowerCase().endsWith('.pdf') ? (
+                <iframe 
+                  src={getDocumentUrl(previewPath)} 
+                  title={previewTitle}
+                  style={{ width: '100%', height: '500px', border: 'none' }}
+                />
+              ) : (
+                <img 
+                  src={getDocumentUrl(previewPath)} 
+                  alt={previewTitle}
+                  style={{ maxWidth: '100%', maxHeight: '500px', objectFit: 'contain' }}
+                />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

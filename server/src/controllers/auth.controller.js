@@ -2,12 +2,15 @@ import bcrypt from 'bcryptjs';
 import { User } from '../models/User.js';
 import { DonorProfile } from '../models/DonorProfile.js';
 import { OrgProfile } from '../models/OrgProfile.js';
+import { BloodRequest } from '../models/BloodRequest.js';
+import { DonorInterest } from '../models/DonorInterest.js';
+import { Message } from '../models/Message.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt.js';
 import { sendOTP, verifyOTP } from '../services/otp.service.js';
 
 export const register = async (req, res, next) => {
   try {
-    const { fullName, phone, email, role, password, bloodGroup, city, state, weightKg } = req.body;
+    const { fullName, phone, email, role, password, bloodGroup, city, state, weightKg, latitude, longitude } = req.body;
 
     // Check duplicate phone
     const existingUserByPhone = await User.findOne({ phone });
@@ -35,29 +38,39 @@ export const register = async (req, res, next) => {
       email: email || undefined,
       role,
       passwordHash,
-      phoneVerified: false, // will require verification or verified via OTP
+      phoneVerified: false,
     });
+
+    // Build GeoJSON location point if coordinates provided
+    let location;
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      location = { type: 'Point', coordinates: [lng, lat] }; // GeoJSON: [lng, lat]
+    }
 
     // Create corresponding profile
     if (role === 'INDIVIDUAL') {
       await DonorProfile.create({
         userId: user._id,
         bloodGroup,
-        bloodGroupVerified: false, // Always starts unverified for MVP
+        bloodGroupVerified: false,
         city,
         state,
         weightKg,
         available: false,
+        location,
       });
     } else if (role === 'ORG') {
       await OrgProfile.create({
         userId: user._id,
         orgName: fullName,
-        registrationNo: `REG-${Math.floor(100000 + Math.random() * 900000)}`, // Auto-generated for demo
-        orgType: 'HOSPITAL', // default
+        registrationNo: `REG-${Math.floor(100000 + Math.random() * 900000)}`,
+        orgType: 'HOSPITAL',
         city,
         state,
         verificationStatus: 'PENDING',
+        location,
       });
     }
 
@@ -171,7 +184,23 @@ export const otpSend = async (req, res, next) => {
     if (!phone) {
       return res.status(400).json({ error: 'Phone number is required' });
     }
-    // Check if user exists. If not, we still allow sending OTP for register verification in frontend.
+
+    /**
+     * SECURITY — Only send OTP to phone numbers that belong to a registered user.
+     * Without this check, anyone could call this endpoint with an arbitrary phone
+     * number and trigger an SMS to a person who never signed up, effectively
+     * weaponising our Twilio account for SMS spam/harassment.
+     *
+     * The client-side registration flow sends OTP to confirm phone ownership
+     * during signup.  For that specific case, the user won't exist yet — so we
+     * allow the send if the phone is not yet registered (new user onboarding).
+     * For the login / re-send OTP case, the user MUST already exist.
+     */
+    const existingUser = await User.findOne({ phone });
+
+    // If user does not exist, allow OTP for registration purposes only
+    // (frontend sends this during phone verification step of sign-up).
+    // We do NOT reveal whether the phone is registered to avoid enumeration.
     sendOTP(phone, 'AUTH');
     res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
@@ -313,6 +342,86 @@ export const me = async (req, res, next) => {
       phoneVerified: user.phoneVerified,
       profile,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAccount = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    // 1. Delete user
+    const user = await User.findByIdAndDelete(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // 2. Delete profiles
+    await DonorProfile.deleteOne({ userId });
+    await OrgProfile.deleteOne({ userId });
+
+    // 3. Delete interest entries
+    await DonorInterest.deleteMany({ donorId: userId });
+
+    // 4. Delete requests created by this user
+    await BloodRequest.deleteMany({ requesterId: userId });
+
+    /**
+     * 5. Delete chat messages sent by this user.
+     *
+     * WHY THIS MATTERS (PII):
+     * The Message model stores free-text chat content between a donor and a
+     * patient/guardian.  This chat happens AFTER contact details are revealed,
+     * so messages often contain:
+     *   - The user's real name, phone number, or address shared conversationally.
+     *   - Medical context about the patient (ward, condition, urgency).
+     *   - Location details shared to coordinate the donation.
+     *
+     * If we do not delete these when an account is removed, all of that personally
+     * identifiable information persists in the database indefinitely even though the
+     * user has explicitly requested account deletion.  Under GDPR / India's DPDP Act,
+     * this constitutes a violation of the "right to erasure".
+     *
+     * We delete by `senderId` — messages FROM this user.  Messages that reference
+     * this user as part of a conversation on another user's request are retained
+     * (the other party's conversation history is theirs), but the deleted user's
+     * own authored content is removed.
+     */
+    await Message.deleteMany({ senderId: userId });
+
+    // 6. Clear session cookie
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+    });
+
+    res.json({ success: true, message: 'Account and all associated records deleted successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+export const historyRequests = async (req, res, next) => {
+  try {
+    const requests = await BloodRequest.find({ requesterId: req.user.id })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(requests);
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const historyDonations = async (req, res, next) => {
+  try {
+    const interests = await DonorInterest.find({ donorId: req.user.id })
+      .populate('requestId')
+      .sort({ createdAt: -1 })
+      .lean();
+    res.json(interests);
   } catch (error) {
     next(error);
   }

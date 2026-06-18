@@ -16,6 +16,10 @@ import {
   getFlaggedRequests,
   clearFlags,
   cancelFlaggedRequest,
+  getDisputes,
+  resolveDispute,
+  getAllRequests,
+  getRequestByIdAdmin,
 } from '../controllers/admin.controller.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireRole } from '../middleware/role.middleware.js';
@@ -50,7 +54,15 @@ router.get('/flags', getFlaggedRequests);
 router.put('/flags/:requestId/clear', clearFlags);
 router.put('/flags/:requestId/cancel', cancelFlaggedRequest);
 
-// Parameterized detail routes (must be at the bottom to avoid clashing)
-router.get('/:id', getUserById);
+// Disputes & Oversight Requests
+router.get('/disputes', getDisputes);
+router.put('/disputes/:disputeId/resolve', resolveDispute);
+
+// All Requests (with filter + pagination) + individual request detail
+router.get('/requests', getAllRequests);
+router.get('/requests/:requestId', getRequestByIdAdmin);
+
+// Parameterized user detail (must be at the bottom to avoid clashing with /requests/:id)
+router.get('/users/:id', getUserById);
 
 export default router;
