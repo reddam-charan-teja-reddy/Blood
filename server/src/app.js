@@ -14,8 +14,12 @@ import requestRoutes from './routes/request.routes.js';
 import orgRoutes from './routes/org.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
+import dns from "node:dns/promises"; // Or const dns = require("node:dns/promises");
+dns.setServers(["1.1.1.1", "8.8.8.8"]);
 
 const app = express();
+
+
 
 // Connect to Database (Only if not in test env)
 if (config.NODE_ENV !== 'test') {

@@ -362,7 +362,7 @@ export default function RegisterPage() {
                 We sent a 6-digit verification code to <strong style={{ color: '#fff' }}>{phone}</strong>.
               </p>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                (Mock OTP code is logged in browser console/server console logs)
+                (Mock OTP code is logged in browser console/server logs. Or use <strong>123456</strong> if bypass is active.)
               </p>
             </div>
 

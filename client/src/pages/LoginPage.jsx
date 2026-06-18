@@ -282,7 +282,7 @@ export default function LoginPage() {
                 We sent a 6-digit code to <strong style={{ color: '#fff' }}>{phone}</strong>
               </p>
               <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                (Mock OTP is logged in the browser console / server terminal logs)
+                (Mock OTP is logged in browser console / server logs. Or use <strong>123456</strong> if bypass is active.)
               </p>
             </div>
 

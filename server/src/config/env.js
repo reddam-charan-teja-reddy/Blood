@@ -29,6 +29,7 @@ const envSchema = z.object({
     .enum(["development", "production", "test"])
     .default("development"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
+  BYPASS_OTP: z.preprocess((val) => val === 'true' || val === true, z.boolean()).default(false),
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
