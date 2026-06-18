@@ -2,6 +2,7 @@ import { DonorProfile } from '../models/DonorProfile.js';
 import { BloodRequest } from '../models/BloodRequest.js';
 import { DonorInterest } from '../models/DonorInterest.js';
 import { Dispute } from '../models/Dispute.js';
+import { User } from '../models/User.js';
 import { computeEligibility } from '../services/eligibility.service.js';
 import { compatibleDonorGroups } from '../utils/bloodCompat.js';
 
@@ -55,15 +56,15 @@ export const searchDonors = async (req, res, next) => {
             hint: 'You can only search for donors in cities where you have active blood requests.',
           });
         }
-        query.city = { $regex: `^${city}$`, $options: 'i' };
+        query.city = { $regex: `^${escapeRegex(city)}$`, $options: 'i' };
       } else {
         // Default search to the cities of active requests
-        query.city = { $in: allowedCities.map(c => new RegExp(`^${c}$`, 'i')) };
+        query.city = { $in: allowedCities.map(c => new RegExp(`^${escapeRegex(c)}$`, 'i')) };
       }
     } else {
       // Admin is searching
       if (bloodGroup) query.bloodGroup = bloodGroup;
-      if (city) query.city = { $regex: `^${city}$`, $options: 'i' };
+      if (city) query.city = { $regex: `^${escapeRegex(city)}$`, $options: 'i' };
     }
 
     const donors = await DonorProfile.find(query)
@@ -294,6 +295,51 @@ export const fileDispute = async (req, res, next) => {
       filedById: req.user.id,
       reason: reason.trim(),
       evidence: evidence ? evidence.trim() : undefined,
+    });
+
+    res.status(201).json(dispute);
+  } catch (error) {
+    next(error);
+  }
+};
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export const fileRestrictionChallenge = async (req, res, next) => {
+  try {
+    const { reason, evidence } = req.body;
+
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'Reason for challenge is required' });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const isRestricted = user.restrictRequestUntil && new Date(user.restrictRequestUntil) > new Date();
+    if (!isRestricted) {
+      return res.status(400).json({ error: 'You do not have any active request creation restrictions to challenge.' });
+    }
+
+    const existingChallenge = await Dispute.findOne({
+      filedById: req.user.id,
+      type: 'RESTRICTION',
+      status: 'OPEN',
+    });
+    if (existingChallenge) {
+      return res.status(400).json({ error: 'You already have a pending restriction challenge under review.' });
+    }
+
+    const dispute = await Dispute.create({
+      filedById: req.user.id,
+      type: 'RESTRICTION',
+      reason: reason.trim(),
+      evidence: evidence ? evidence.trim() : undefined,
+      status: 'OPEN',
     });
 
     res.status(201).json(dispute);

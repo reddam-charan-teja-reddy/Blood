@@ -13,13 +13,22 @@ import {
   Check, X, Ban, RefreshCw, Search, Heart, Loader2 
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useAuthStore } from '../../store/authStore';
 
 export default function AdminDashboardPage() {
   const queryClient = useQueryClient();
+  const { user, updateUser } = useAuthStore();
   const [activeTab, setActiveTab] = useState('overview'); // overview, orgs, users, proofs, flags
   const [userSearch, setUserSearch] = useState('');
   const [previewPath, setPreviewPath] = useState(null);
   const [previewTitle, setPreviewTitle] = useState('');
+
+  // States for Cancel Request Modal
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelRequestId, setCancelRequestId] = useState(null);
+  const [cancelRequestType, setCancelRequestType] = useState('FLAGGED'); // 'FLAGGED' or 'OVERSIGHT'
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelRestrictionType, setCancelRestrictionType] = useState('NONE');
 
   const getDocumentUrl = (path) => {
     if (!path) return '';
@@ -160,12 +169,20 @@ export default function AdminDashboardPage() {
   });
 
   const cancelFlaggedMutation = useMutation({
-    mutationFn: (requestId) => api(`/admin/flags/${requestId}/cancel`, { method: 'PUT' }),
+    mutationFn: ({ requestId, reason, restrictionType }) => api(`/admin/flags/${requestId}/cancel`, {
+      method: 'PUT',
+      body: JSON.stringify({ reason, restrictionType }),
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['flaggedRequests'] });
       queryClient.invalidateQueries({ queryKey: ['adminStats'] });
-      toast.success('Request force-cancelled');
+      toast.success('Request force-cancelled and requester restricted');
+      setShowCancelModal(false);
+      setCancelReason('');
+      setCancelRestrictionType('NONE');
+      setCancelRequestId(null);
     },
+    onError: (err) => toast.error(err.message || 'Failed to cancel request'),
   });
 
   const resolveDisputeMutation = useMutation({
@@ -181,13 +198,103 @@ export default function AdminDashboardPage() {
   });
 
   const cancelOversightRequestMutation = useMutation({
-    mutationFn: (requestId) => api(`/requests/${requestId}`, { method: 'DELETE' }),
+    mutationFn: ({ requestId, reason, restrictionType }) => api(`/requests/${requestId}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ reason, restrictionType }),
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['adminOversight'] });
       toast.success('Request cancelled successfully');
+      setShowCancelModal(false);
+      setCancelReason('');
+      setCancelRestrictionType('NONE');
+      setCancelRequestId(null);
     },
     onError: (err) => toast.error(err.message || 'Failed to cancel request'),
   });
+
+  // Settings Tab State
+  const [scopeType, setScopeType] = useState(() => {
+    if (user?.moderationCity) return 'CITY';
+    if (user?.moderationLocation?.coordinates) return 'GEOSPATIAL';
+    return 'NONE';
+  });
+  const [scopeCity, setScopeCity] = useState(user?.moderationCity || '');
+  const [scopeLat, setScopeLat] = useState(user?.moderationLocation?.coordinates?.[1] || '');
+  const [scopeLng, setScopeLng] = useState(user?.moderationLocation?.coordinates?.[0] || '');
+  const [scopeRadius, setScopeRadius] = useState(user?.moderationRadiusKm || '');
+  const [detectingLocation, setDetectingLocation] = useState(false);
+
+  const updateScopeMutation = useMutation({
+    mutationFn: (scopeData) => api('/admin/moderation-scope', {
+      method: 'PUT',
+      body: JSON.stringify(scopeData),
+    }),
+    onSuccess: (data) => {
+      updateUser({
+        moderationCity: data.moderationCity,
+        moderationRadiusKm: data.moderationRadiusKm,
+        moderationLocation: data.moderationLocation,
+      });
+      // Invalidate queries to reload all filtered data
+      queryClient.invalidateQueries();
+      toast.success('Moderation scope updated successfully!');
+    },
+    onError: (err) => {
+      toast.error(err.message || 'Failed to update moderation scope');
+    }
+  });
+
+  const handleSaveScope = (e) => {
+    e.preventDefault();
+    const data = { type: scopeType };
+
+    if (scopeType === 'CITY') {
+      if (!scopeCity.trim()) {
+        toast.error('City name is required');
+        return;
+      }
+      data.city = scopeCity;
+    } else if (scopeType === 'GEOSPATIAL') {
+      if (!scopeLat || !scopeLng || !scopeRadius) {
+        toast.error('Latitude, longitude, and radius are required');
+        return;
+      }
+      data.latitude = parseFloat(scopeLat);
+      data.longitude = parseFloat(scopeLng);
+      data.radiusKm = parseFloat(scopeRadius);
+
+      if (isNaN(data.latitude) || isNaN(data.longitude) || isNaN(data.radiusKm) || data.radiusKm <= 0) {
+        toast.error('Please enter valid coordinates and a positive radius');
+        return;
+      }
+    }
+
+    updateScopeMutation.mutate(data);
+  };
+
+  const handleDetectLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error('Geolocation is not supported by your browser');
+      return;
+    }
+
+    setDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setScopeLat(position.coords.latitude);
+        setScopeLng(position.coords.longitude);
+        setDetectingLocation(false);
+        toast.success('Location detected successfully!');
+      },
+      (err) => {
+        console.error(err);
+        setDetectingLocation(false);
+        toast.error('Failed to retrieve location: ' + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
 
   return (
     <div className="fadeIn">
@@ -202,6 +309,26 @@ export default function AdminDashboardPage() {
             Coordinate platform safety audits, verify hospital organizations, and review statistics.
           </p>
         </div>
+        {user && (
+          <div className="badge flex align-center gap-2" style={{
+            padding: '0.5rem 1rem',
+            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            border: '1px solid rgba(239, 68, 68, 0.2)',
+            borderRadius: 'var(--radius-md)',
+            color: 'var(--primary-color)',
+            fontWeight: 600,
+            fontSize: '0.875rem',
+            alignSelf: 'center'
+          }}>
+            <span>🌐 Moderation Scope:</span>
+            <span style={{ color: '#fff' }}>
+              {user.moderationCity ? `City: ${user.moderationCity}` :
+               (user.moderationLocation?.coordinates && user.moderationRadiusKm) ?
+               `Radius: ${user.moderationRadiusKm} km around [${user.moderationLocation.coordinates[1].toFixed(4)}, ${user.moderationLocation.coordinates[0].toFixed(4)}]` :
+               'National (No Limit)'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* STATS OVERVIEW CARDS */}
@@ -265,6 +392,9 @@ export default function AdminDashboardPage() {
         </button>
         <button onClick={() => setActiveTab('oversight')} className={`tab-btn ${activeTab === 'oversight' ? 'active' : ''}`}>
           Oversight Feed
+        </button>
+        <button onClick={() => setActiveTab('settings')} className={`tab-btn ${activeTab === 'settings' ? 'active' : ''}`}>
+          Scope Settings
         </button>
       </div>
 
@@ -599,9 +729,18 @@ export default function AdminDashboardPage() {
                         </Link>
                       </td>
                       <td>
-                        <span className="badge badge-emergency" style={{ animation: 'none' }}>
+                        <span className="badge badge-emergency" style={{ animation: 'none', marginBottom: '0.5rem' }}>
                           ⚠️ {req.flagCount} flags
                         </span>
+                        {Array.isArray(req.flaggedBy) && req.flaggedBy.length > 0 && (
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '0.35rem', paddingLeft: '0.5rem', borderLeft: '2px solid var(--primary-color)', textAlign: 'left', lineHeight: '1.4' }}>
+                            {req.flaggedBy.map((f, idx) => (
+                              <div key={idx} style={{ marginBottom: '0.25rem' }}>
+                                • <strong>{f.userId?.fullName || 'User'}:</strong> {f.reason}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td>
                         <span className={`badge ${req.status === 'ACTIVE' ? 'badge-high' : 'badge-success'}`}>
@@ -619,14 +758,24 @@ export default function AdminDashboardPage() {
                           <Check size={12} />
                           <span>Clear Flags</span>
                         </button>
-                        <button 
-                          onClick={() => cancelFlaggedMutation.mutate(req._id)}
-                          className="btn btn-danger btn-sm flex align-center gap-1"
-                          disabled={req.status === 'CANCELLED'}
-                        >
-                          <Ban size={12} />
-                          <span>Cancel Request</span>
-                        </button>
+                          <button 
+                           onClick={() => {
+                             if (req.status === 'CANCELLED') {
+                               toast.error('Action already taken: This request is already cancelled.');
+                               return;
+                             }
+                             setCancelRequestId(req._id);
+                             setCancelRequestType('FLAGGED');
+                             setCancelReason('');
+                             setCancelRestrictionType('NONE');
+                             setShowCancelModal(true);
+                           }}
+                           className="btn btn-danger btn-sm flex align-center gap-1"
+                           disabled={req.status === 'CANCELLED' || cancelFlaggedMutation.isPending}
+                         >
+                           <Ban size={12} />
+                           <span>Cancel Request</span>
+                         </button>
                       </td>
                     </tr>
                   ))}
@@ -666,7 +815,9 @@ export default function AdminDashboardPage() {
                       <td style={{ color: '#fff', fontWeight: 600 }}>{disp.filedById?.fullName}</td>
                       <td>{disp.filedById?.phone}</td>
                       <td>
-                        {disp.interestId?.requestId ? (
+                        {disp.type === 'RESTRICTION' ? (
+                          <span style={{ color: 'var(--warning-color)', fontWeight: 600 }}>⚠️ Request Privilege Restriction Challenge</span>
+                        ) : disp.interestId?.requestId ? (
                           <Link to={`/request/${disp.interestId.requestId._id}`} className="flex align-center gap-2" style={{ textDecoration: 'none', color: 'inherit' }}>
                             <BloodGroupBadge group={disp.interestId.requestId.bloodGroup} />
                             <span style={{ textDecoration: 'underline', color: 'var(--primary-color)' }}>{disp.interestId.requestId.hospitalName} ({disp.interestId.requestId.component})</span>
@@ -799,9 +950,15 @@ export default function AdminDashboardPage() {
                             </Link>
                             <button 
                               onClick={() => {
-                                if (confirm('Are you sure you want to force-cancel this blood request?')) {
-                                  cancelOversightRequestMutation.mutate(req._id);
+                                if (req.status === 'CANCELLED') {
+                                  toast.error('Action already taken: This request is already cancelled.');
+                                  return;
                                 }
+                                setCancelRequestId(req._id);
+                                setCancelRequestType('OVERSIGHT');
+                                setCancelReason('');
+                                setCancelRestrictionType('NONE');
+                                setShowCancelModal(true);
                               }}
                               className="btn btn-danger btn-sm"
                               disabled={req.status === 'CANCELLED' || cancelOversightRequestMutation.isPending}
@@ -843,6 +1000,145 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
+      {/* TAB 8: SCOPE SETTINGS */}
+      {activeTab === 'settings' && (
+        <div className="card flex flex-col gap-6" style={{ maxWidth: '600px', margin: '0 auto' }}>
+          <div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#fff' }}>Configure Moderation Scope</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.25rem' }}>
+              Limit your administrative access to a specific geographic region to filter out irrelevant records and avoid data overload.
+            </p>
+          </div>
+
+          <form onSubmit={handleSaveScope} className="flex flex-col gap-4">
+            <div className="form-group flex flex-col gap-2">
+              <label style={{ fontWeight: 600, color: '#fff', fontSize: '0.875rem' }}>Select Scope Limit Type</label>
+              
+              <div className="flex gap-4 m-b-2 flex-wrap">
+                <label className="flex align-center gap-2 pointer" style={{ color: '#fff', fontSize: '0.875rem' }}>
+                  <input 
+                    type="radio" 
+                    name="scopeType" 
+                    value="NONE" 
+                    checked={scopeType === 'NONE'}
+                    onChange={() => setScopeType('NONE')}
+                  />
+                  <span>No Limit (National/All India)</span>
+                </label>
+
+                <label className="flex align-center gap-2 pointer" style={{ color: '#fff', fontSize: '0.875rem' }}>
+                  <input 
+                    type="radio" 
+                    name="scopeType" 
+                    value="CITY" 
+                    checked={scopeType === 'CITY'}
+                    onChange={() => setScopeType('CITY')}
+                  />
+                  <span>Limit by City</span>
+                </label>
+
+                <label className="flex align-center gap-2 pointer" style={{ color: '#fff', fontSize: '0.875rem' }}>
+                  <input 
+                    type="radio" 
+                    name="scopeType" 
+                    value="GEOSPATIAL" 
+                    checked={scopeType === 'GEOSPATIAL'}
+                    onChange={() => setScopeType('GEOSPATIAL')}
+                  />
+                  <span>Limit by Coordinates & Distance Radius</span>
+                </label>
+              </div>
+            </div>
+
+            {/* City Input */}
+            {scopeType === 'CITY' && (
+              <div className="form-group fadeIn">
+                <label className="form-label">City Name</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="Enter city name (e.g. Vijayawada)" 
+                  value={scopeCity}
+                  onChange={(e) => setScopeCity(e.target.value)}
+                  required
+                />
+              </div>
+            )}
+
+            {/* Geospatial Inputs */}
+            {scopeType === 'GEOSPATIAL' && (
+              <div className="flex flex-col gap-4 fadeIn">
+                <div className="flex gap-3">
+                  <div className="form-group flex-1" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Latitude</label>
+                    <input 
+                      type="number" 
+                      step="any"
+                      className="form-input" 
+                      placeholder="e.g. 16.5062" 
+                      value={scopeLat}
+                      onChange={(e) => setScopeLat(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="form-group flex-1" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Longitude</label>
+                    <input 
+                      type="number" 
+                      step="any"
+                      className="form-input" 
+                      placeholder="e.g. 80.6480" 
+                      value={scopeLng}
+                      onChange={(e) => setScopeLng(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end m-b-2">
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary btn-sm flex align-center gap-1"
+                    onClick={handleDetectLocation}
+                    disabled={detectingLocation}
+                  >
+                    {detectingLocation ? (
+                      <>
+                        <Loader2 size={12} className="spin" />
+                        <span>Detecting...</span>
+                      </>
+                    ) : (
+                      <span>📍 Detect My Coordinates</span>
+                    )}
+                  </button>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Radius Limit (Kilometers)</label>
+                  <input 
+                    type="number" 
+                    step="any"
+                    className="form-input" 
+                    placeholder="e.g. 25" 
+                    value={scopeRadius}
+                    onChange={(e) => setScopeRadius(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
+            <button 
+              type="submit" 
+              className="btn btn-primary m-t-4"
+              disabled={updateScopeMutation.isPending}
+            >
+              {updateScopeMutation.isPending ? 'Saving Settings...' : 'Save Scope Settings'}
+            </button>
+          </form>
+        </div>
+      )}
+
       {/* Document Preview Modal */}
       {previewPath && (
         <div className="modal-overlay">
@@ -872,6 +1168,113 @@ export default function AdminDashboardPage() {
                 />
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Request Modal */}
+      {showCancelModal && (
+        <div className="modal-overlay">
+          <div className="modal-content card" style={{ backgroundColor: 'var(--surface-color)', maxWidth: '500px' }}>
+            <div className="flex justify-between align-center m-b-4" style={{ marginBottom: '1rem' }}>
+              <h3 style={{ fontWeight: 700, color: '#fff' }} className="flex align-center gap-2">
+                <AlertTriangle color="var(--danger-color)" />
+                <span>Cancel Blood Request</span>
+              </h3>
+              <button 
+                type="button"
+                onClick={() => {
+                  setShowCancelModal(false);
+                  setCancelRequestId(null);
+                  setCancelReason('');
+                  setCancelRestrictionType('NONE');
+                }}
+                className="btn btn-secondary btn-sm"
+                style={{ minWidth: '40px', padding: '0.25rem 0.5rem' }}
+              >
+                ✕
+              </button>
+            </div>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              Provide a reason for cancelling this blood request. You can also temporarily restrict request creation for the user or suspend their account entirely.
+            </p>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              if (!cancelReason.trim()) {
+                toast.error('Cancellation reason is required');
+                return;
+              }
+              if (cancelRequestType === 'FLAGGED') {
+                cancelFlaggedMutation.mutate({
+                  requestId: cancelRequestId,
+                  reason: cancelReason.trim(),
+                  restrictionType: cancelRestrictionType,
+                });
+              } else {
+                cancelOversightRequestMutation.mutate({
+                  requestId: cancelRequestId,
+                  reason: cancelReason.trim(),
+                  restrictionType: cancelRestrictionType,
+                });
+              }
+            }} className="flex flex-col gap-4">
+              <div className="form-group">
+                <label className="form-label">Cancellation Reason (Mandatory)</label>
+                <textarea 
+                  className="form-input" 
+                  rows={4}
+                  placeholder="Explain why this request is being cancelled..."
+                  value={cancelReason}
+                  onChange={e => setCancelReason(e.target.value)}
+                  style={{ resize: 'vertical' }}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Requester Moderation Action</label>
+                <select
+                  className="form-select"
+                  value={cancelRestrictionType}
+                  onChange={e => setCancelRestrictionType(e.target.value)}
+                >
+                  <option value="NONE">None - Just cancel request</option>
+                  <option value="RESTRICT_REQUEST">Restrict request creation for 14 days</option>
+                  <option value="SUSPEND">Suspend user account entirely</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3" style={{ marginTop: '0.5rem' }}>
+                <button 
+                  type="button"
+                  onClick={() => {
+                    setShowCancelModal(false);
+                    setCancelRequestId(null);
+                    setCancelReason('');
+                    setCancelRestrictionType('NONE');
+                  }} 
+                  className="btn btn-secondary flex-1"
+                  disabled={cancelFlaggedMutation.isPending || cancelOversightRequestMutation.isPending}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-danger flex-1"
+                  disabled={cancelFlaggedMutation.isPending || cancelOversightRequestMutation.isPending}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                >
+                  {cancelFlaggedMutation.isPending || cancelOversightRequestMutation.isPending ? (
+                    <>
+                      <Loader2 className="animate-spin" size={16} />
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <span>Confirm Cancellation</span>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

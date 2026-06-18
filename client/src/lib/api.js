@@ -48,9 +48,13 @@ export async function api(endpoint, options = {}) {
       });
     } catch (error) {
       useAuthStore.getState().clearAuth();
-      // If we are not on the login/register/landing pages, redirect
+      // If we are not on a public page (login, register, landing, request preview, or shared link), redirect
       const path = window.location.pathname;
-      if (path !== '/login' && path !== '/register' && path !== '/') {
+      const isPublicRequestPage = path.startsWith('/request/') && path !== '/request/new';
+      const isPublicSharePage = path.startsWith('/r/');
+      const isCommonPublicPage = path === '/login' || path === '/register' || path === '/';
+
+      if (!isCommonPublicPage && !isPublicRequestPage && !isPublicSharePage) {
         window.location.href = '/login';
       }
       throw new Error('Session expired');

@@ -30,11 +30,9 @@ export default function OrgDashboardPage() {
   });
 
   // Query supply feed — public requests matching org inventory
-  const [activeTab, setActiveTab] = useState('overview');
   const { data: feedData, isLoading: feedLoading } = useQuery({
     queryKey: ['orgFeed'],
     queryFn: () => api('/orgs/feed'),
-    enabled: activeTab === 'feed',
     staleTime: 30000,
   });
 
@@ -373,9 +371,19 @@ export default function OrgDashboardPage() {
               <Droplets size={18} color="var(--primary-color)" />
               <span>Supply Feed — Requests You Can Help With</span>
             </h3>
-            <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-              Based on your current inventory & location
-            </span>
+            <div className="flex align-center gap-3">
+              <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+                Based on current inventory & location
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['orgFeed'] })}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+              >
+                Refresh
+              </button>
+            </div>
           </div>
 
           {feedLoading ? (
@@ -383,12 +391,9 @@ export default function OrgDashboardPage() {
               <Loader2 size={24} style={{ animation: 'spin 1s linear infinite', color: 'var(--primary-color)' }} />
             </div>
           ) : !feedData ? (
-            <button
-              className="btn btn-secondary btn-sm"
-              onClick={() => queryClient.invalidateQueries({ queryKey: ['orgFeed'] })}
-            >
-              Load Supply Feed
-            </button>
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+              <p>Failed to load supply feed.</p>
+            </div>
           ) : feedData.requests?.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
               <Heart size={32} color="var(--text-muted)" style={{ margin: '0 auto 0.75rem' }} />
@@ -400,37 +405,49 @@ export default function OrgDashboardPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {feedData.requests.map(req => (
-                <div key={req._id} className="flex align-center justify-between p-3 gap-4" style={{
+                <div key={req._id} className="flex gap-3" style={{
                   backgroundColor: 'rgba(15, 23, 42, 0.4)',
                   borderRadius: 'var(--radius-sm)',
                   border: req.urgency === 'EMERGENCY' ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid var(--border-color)',
-                  flexWrap: 'wrap',
+                  alignItems: 'flex-start',
+                  padding: '1.25rem 1.25rem',
                 }}>
-                  <div className="flex align-center gap-3">
+                  {/* Left Column: Blood Group Badge */}
+                  <div style={{ flexShrink: 0, marginTop: '2px', transform: 'scale(0.9)', transformOrigin: 'top left' }}>
                     <BloodGroupBadge group={req.bloodGroup} />
+                  </div>
+
+                  {/* Right Column: Info & Actions stacked vertically */}
+                  <div className="flex-1 flex flex-col gap-2" style={{ minWidth: 0 }}>
                     <div>
-                      <p style={{ fontWeight: 700, color: '#fff', fontSize: '0.9375rem' }}>
+                      <p style={{ fontWeight: 700, color: '#fff', fontSize: '0.9375rem', lineHeight: '1.3' }}>
                         {req.unitsNeeded} unit(s) at {req.hospitalName}
                       </p>
-                      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                      <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                         {req.hospitalCity}, {req.hospitalState} · Needed by {new Date(req.requiredBy).toLocaleDateString('en-IN')}
                       </p>
                     </div>
-                  </div>
-                  <div className="flex align-center gap-2">
-                    <UrgencyChip urgency={req.urgency} />
-                    <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ fontSize: '0.8125rem' }}>
-                      Details
-                    </Link>
-                    <button
-                      className="btn btn-primary btn-sm flex align-center gap-1"
-                      style={{ fontSize: '0.8125rem' }}
-                      onClick={() => supplyMutation.mutate(req._id)}
-                      disabled={supplyMutation.isPending}
-                    >
-                      <Droplets size={14} />
-                      Offer to Supply
-                    </button>
+
+                    {/* Actions and Badges Row */}
+                    <div className="flex align-center flex-wrap gap-2" style={{ marginTop: '0.25rem' }}>
+                      <div style={{ transform: 'scale(0.9)', transformOrigin: 'left center', display: 'inline-flex' }}>
+                        <UrgencyChip urgency={req.urgency} />
+                      </div>
+                      <div className="flex gap-2" style={{ marginLeft: 'auto' }}>
+                        <Link to={`/request/${req._id}`} className="btn btn-secondary btn-sm" style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}>
+                          Details
+                        </Link>
+                        <button
+                          className="btn btn-primary btn-sm flex align-center gap-1"
+                          style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem' }}
+                          onClick={() => supplyMutation.mutate(req._id)}
+                          disabled={supplyMutation.isPending}
+                        >
+                          <Droplets size={14} />
+                          Offer to Supply
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}

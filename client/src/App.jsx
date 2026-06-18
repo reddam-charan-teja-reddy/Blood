@@ -18,6 +18,7 @@ import RequestDetailPage from './pages/RequestDetailPage';
 import OrgDashboardPage from './pages/org/OrgDashboardPage';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import NotificationsPage from './pages/NotificationsPage';
+import { useLocationSync } from './hooks/useLocationSync';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -53,6 +54,9 @@ function ProtectedRoute({ children, allowedRoles }) {
 export default function App() {
   const { user, isAuthenticated, setAuth, clearAuth } = useAuthStore();
   const [isInitializing, setIsInitializing] = useState(!!user && !isAuthenticated);
+
+  // Background location synchronization (every 10 minutes)
+  useLocationSync();
 
   useEffect(() => {
     const restoreSession = async () => {

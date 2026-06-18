@@ -20,6 +20,7 @@ import {
   resolveDispute,
   getAllRequests,
   getRequestByIdAdmin,
+  updateModerationScope,
 } from '../controllers/admin.controller.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireRole } from '../middleware/role.middleware.js';
@@ -28,6 +29,9 @@ const router = Router();
 
 router.use(requireAuth);
 router.use(requireRole('ADMIN'));
+
+// Moderation Scope configuration
+router.put('/moderation-scope', updateModerationScope);
 
 // Stats Overview
 router.get('/stats', getStats);

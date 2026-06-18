@@ -183,10 +183,14 @@ export default function RequestDetailPage() {
   });
 
   const flagMutation = useMutation({
-    mutationFn: () => api(`/requests/${request?._id}/flag`, { method: 'POST' }),
+    mutationFn: (reason) => api(`/requests/${request?._id}/flag`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
     onSuccess: () => {
       toast.success('Request reported. Administration will review.');
     },
+    onError: (err) => toast.error(err.message || 'Failed to report request'),
   });
 
   const handleShare = () => {
@@ -295,7 +299,19 @@ export default function RequestDetailPage() {
             <span>Share to WhatsApp</span>
           </button>
           {!isOwner && isAuthenticated && (
-            <button onClick={() => flagMutation.mutate()} className="btn btn-secondary btn-sm flex align-center gap-1" style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }}>
+            <button 
+              onClick={() => {
+                const reason = prompt('Please enter the reason for reporting this request (Mandatory):');
+                if (reason === null) return; // User cancelled
+                if (!reason.trim()) {
+                  toast.error('Reason is required to report a request');
+                  return;
+                }
+                flagMutation.mutate(reason.trim());
+              }} 
+              className="btn btn-secondary btn-sm flex align-center gap-1" 
+              style={{ borderColor: 'var(--danger-color)', color: 'var(--danger-color)' }}
+            >
               <AlertTriangle size={14} />
               <span>Report Request</span>
             </button>

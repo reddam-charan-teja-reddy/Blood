@@ -83,6 +83,15 @@ export const createRequest = async (req, res, next) => {
       hospitalLongitude,
     } = req.body;
 
+    // Restriction Check: Check if user request creation is restricted by admin
+    const dbUser = await User.findById(req.user.id);
+    if (dbUser && dbUser.restrictRequestUntil && new Date(dbUser.restrictRequestUntil) > new Date()) {
+      return res.status(403).json({
+        error: 'Abuse check failed',
+        hint: `Your request creation privileges are temporarily suspended until ${new Date(dbUser.restrictRequestUntil).toLocaleString('en-IN')}`,
+      });
+    }
+
     // Abuse Check: max 2 active requests per user
     const activeRequests = await BloodRequest.countDocuments({
       requesterId: req.user.id,
@@ -335,6 +344,7 @@ export const updateRequest = async (req, res, next) => {
 export const deleteRequest = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const { reason, restrictionType } = req.body;
     const request = await BloodRequest.findById(id);
 
     if (!request) {
@@ -349,6 +359,29 @@ export const deleteRequest = async (req, res, next) => {
     }
 
     request.status = 'CANCELLED';
+
+    // If an Admin performs the cancellation on another user's request
+    if (isAdmin && !isOwner) {
+      if (!reason || !reason.trim()) {
+        return res.status(400).json({ error: 'Cancellation reason is required' });
+      }
+      request.cancellationReason = reason.trim();
+      request.cancelledByAdmin = true;
+
+      // Apply requester restriction
+      const requesterId = request.requesterId;
+      if (restrictionType === 'RESTRICT_REQUEST') {
+        await User.findByIdAndUpdate(requesterId, {
+          restrictRequestUntil: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+        });
+      } else if (restrictionType === 'SUSPEND') {
+        await User.findByIdAndUpdate(requesterId, {
+          suspended: true,
+          suspendedReason: reason.trim() || 'Violation of terms (Abusive request cancelled by admin)'
+        });
+      }
+    }
+
     await request.save();
 
     // Cancel all pending interests
@@ -855,7 +888,12 @@ export const reportOutcome = async (req, res, next) => {
 export const flagRequest = async (req, res, next) => {
   try {
     const { id } = req.params;
+    const { reason } = req.body;
     const userId = req.user.id;
+
+    if (!reason || typeof reason !== 'string' || !reason.trim()) {
+      return res.status(400).json({ error: 'Reason for reporting is required' });
+    }
 
     const request = await BloodRequest.findById(id);
 
@@ -870,22 +908,16 @@ export const flagRequest = async (req, res, next) => {
 
     /**
      * Enforce one-flag-per-user-per-request.
-     * `flaggedBy` is an array of User ObjectIds. We check membership before
-     * incrementing.  This means:
-     *   - Same account cannot flag the same request twice.
-     *   - Different accounts still each get one flag (5 unique users = auto-flag).
-     * Scenario mentioned in audit: "one user with 5 fake accounts" — each fake
-     * account still needs to be a separately registered user; the 5-flag threshold
-     * still requires 5 distinct actors, which raises the bar meaningfully.
+     * `flaggedBy` is an array of subdocuments. We check membership by userId.
      */
     const alreadyFlagged = request.flaggedBy?.some(
-      (uid) => uid.toString() === userId
+      (f) => f.userId.toString() === userId
     );
     if (alreadyFlagged) {
       return res.status(400).json({ error: 'You have already reported this request' });
     }
 
-    request.flaggedBy = [...(request.flaggedBy ?? []), userId];
+    request.flaggedBy = [...(request.flaggedBy ?? []), { userId, reason: reason.trim() }];
     request.flagCount = request.flaggedBy.length;
 
     // Auto-elevate to isFlagged when 5 or more distinct users have reported it

@@ -60,12 +60,26 @@ export const findMatchingDonors = async (bloodRequest) => {
 
       // JS-filter: keep only donors whose personal radius covers this hospital
       const [hosLng, hosLat] = bloodRequest.hospitalLocation.coordinates;
-      potentialDonors = potentialDonors.filter((donor) => {
+      let matchedDonorsGeo = potentialDonors.filter((donor) => {
         if (!donor.location?.coordinates?.length) return false;
         const [donorLng, donorLat] = donor.location.coordinates;
         const distKm = haversineKm(hosLat, hosLng, donorLat, donorLng);
         return distKm <= (donor.notificationRadiusKm || 25);
       });
+
+      // Stepped Expansion Fallback: If no donors are found within their preferred radius,
+      // expand the search limit to at least 50km or double their preference (capped at 100km).
+      if (matchedDonorsGeo.length === 0 && potentialDonors.length > 0) {
+        matchedDonorsGeo = potentialDonors.filter((donor) => {
+          if (!donor.location?.coordinates?.length) return false;
+          const [donorLng, donorLat] = donor.location.coordinates;
+          const distKm = haversineKm(hosLat, hosLng, donorLat, donorLng);
+          const expandedRadius = Math.min(100, Math.max(50, (donor.notificationRadiusKm || 25) * 2));
+          return distKm <= expandedRadius;
+        });
+      }
+
+      potentialDonors = matchedDonorsGeo;
     } else {
       // ── City-string fallback ───────────────────────────────────────────────
       // Used when either:

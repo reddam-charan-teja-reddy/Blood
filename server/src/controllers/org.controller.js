@@ -215,7 +215,19 @@ export const getSupplyFeed = async (req, res, next) => {
         },
       };
 
-      total = await BloodRequest.countDocuments(geoFilter);
+      const countFilter = {
+        ...baseFilter,
+        hospitalLocation: {
+          $geoWithin: {
+            $centerSphere: [
+              orgProfile.location.coordinates,
+              (orgProfile.serviceRadiusKm || 50) / 6378.1
+            ]
+          }
+        }
+      };
+
+      total = await BloodRequest.countDocuments(countFilter);
       requests = await BloodRequest.find(geoFilter)
         .populate('requesterId', 'fullName role')
         .skip(skip)

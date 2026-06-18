@@ -53,6 +53,7 @@ async function seed() {
       available: true,
       totalDonations: 5,
       lastWholeBloodDonation: subDays(new Date(), 62),
+      location: { type: 'Point', coordinates: [80.6470, 16.5050] }, // [lng, lat]
     });
     console.log('👤 Created Donor 1 (Ravi Kumar - O+, Vijayawada)');
 
@@ -74,6 +75,7 @@ async function seed() {
       available: true,
       totalDonations: 12,
       lastWholeBloodDonation: subDays(new Date(), 60),
+      location: { type: 'Point', coordinates: [80.6490, 16.5070] },
     });
     console.log('👤 Created Donor 2 (Meena Rao - O-, Vijayawada)');
 
@@ -89,6 +91,7 @@ async function seed() {
       userId: patient._id,
       city: 'Vijayawada',
       state: 'Andhra Pradesh',
+      location: { type: 'Point', coordinates: [80.6460, 16.5040] },
     });
     console.log('👤 Created Patient (Priya Sharma - Individual, Vijayawada)');
 
@@ -109,6 +112,8 @@ async function seed() {
       state: 'Andhra Pradesh',
       verificationStatus: 'VERIFIED',
       verifiedAt: new Date(),
+      location: { type: 'Point', coordinates: [80.6480, 16.5062] },
+      serviceRadiusKm: 50,
       inventory: {
         'A+': 8,
         'A-': 4,
@@ -135,6 +140,7 @@ async function seed() {
         hospitalName: 'Apollo Hospital Vijayawada',
         hospitalCity: 'Vijayawada',
         hospitalState: 'Andhra Pradesh',
+        hospitalLocation: { type: 'Point', coordinates: [80.6480, 16.5062] },
         expiresAt: addHours(new Date(), 4),
         shareToken: 'share-token-o-positive-emergency',
       },
@@ -149,6 +155,7 @@ async function seed() {
         hospitalName: 'Apollo Hospital Vijayawada',
         hospitalCity: 'Vijayawada',
         hospitalState: 'Andhra Pradesh',
+        hospitalLocation: { type: 'Point', coordinates: [80.6480, 16.5062] },
         expiresAt: addHours(new Date(), 8),
         shareToken: 'share-token-ab-negative-high',
       },
@@ -163,6 +170,7 @@ async function seed() {
         hospitalName: 'MNJ Cancer Hospital',
         hospitalCity: 'Hyderabad',
         hospitalState: 'Telangana',
+        hospitalLocation: { type: 'Point', coordinates: [78.4867, 17.3850] },
         expiresAt: addHours(new Date(), 26),
         shareToken: 'share-token-b-positive-platelets',
       },

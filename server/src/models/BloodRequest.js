@@ -85,13 +85,25 @@ const BloodRequestSchema = new mongoose.Schema({
   flagCount: { type: Number, default: 0 },
   isFlagged: { type: Boolean, default: false },
   /**
-   * Array of User ObjectIds who have flagged this request.
+   * Array of subdocuments representing user reports with reasons.
    * Enforces one-flag-per-user. Auto-elevates isFlagged at >= 5 distinct flags.
    */
   flaggedBy: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+    reason: {
+      type: String,
+    },
+    flaggedAt: {
+      type: Date,
+      default: Date.now,
+    },
   }],
+
+  cancellationReason: { type: String },
+  cancelledByAdmin: { type: Boolean, default: false },
 
   documentPath: { type: String },
 }, {

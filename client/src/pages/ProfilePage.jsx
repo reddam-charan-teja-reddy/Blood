@@ -19,6 +19,9 @@ export default function ProfilePage() {
   const [selectedInterestForDispute, setSelectedInterestForDispute] = React.useState(null);
   const [disputeReason, setDisputeReason] = React.useState('');
   const [disputeEvidence, setDisputeEvidence] = React.useState('');
+  const [showChallengeModal, setShowChallengeModal] = React.useState(false);
+  const [challengeReason, setChallengeReason] = React.useState('');
+  const [challengeEvidence, setChallengeEvidence] = React.useState('');
 
   // Fetch request history
   const { data: requestHistoryData, isLoading: isRequestHistoryLoading } = useQuery({
@@ -57,6 +60,21 @@ export default function ProfilePage() {
       setDisputeEvidence('');
     },
     onError: (err) => toast.error(err.message || 'Failed to file dispute'),
+  });
+
+  const challengeMutation = useMutation({
+    mutationFn: ({ reason, evidence }) => api('/donors/restriction-challenge', {
+      method: 'POST',
+      body: JSON.stringify({ reason, evidence }),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+      toast.success('Restriction challenge filed successfully! Administration will review your appeal.');
+      setShowChallengeModal(false);
+      setChallengeReason('');
+      setChallengeEvidence('');
+    },
+    onError: (err) => toast.error(err.message || 'Failed to file challenge'),
   });
 
   // Fetch complete profile details (/auth/me returns user details + populated profile)
@@ -179,9 +197,32 @@ export default function ProfilePage() {
     return <div style={{ display: 'flex', justifyContent: 'center', padding: '5rem' }}><Loader2 className="animate-spin" size={32} color="#ef4444" /></div>;
   }
 
+  const isRestricted = meData?.restrictRequestUntil && new Date(meData.restrictRequestUntil) > new Date();
+
   return (
     <div className="fadeIn" style={{ maxWidth: '850px', margin: '0 auto' }}>
       
+      {isRestricted && (
+        <div className="card m-b-6 flex flex-col gap-3" style={{ borderColor: 'var(--danger-color)', backgroundColor: 'rgba(239, 68, 68, 0.15)' }}>
+          <div className="flex align-center gap-2" style={{ color: 'var(--danger-color)', fontWeight: 700 }}>
+            <AlertTriangle size={20} />
+            <span>Request Creation Privileges Temporarily Restricted</span>
+          </div>
+          <p style={{ fontSize: '0.875rem', color: '#fff', margin: 0 }}>
+            Your ability to create new blood requests has been restricted by an administrator until <strong>{new Date(meData.restrictRequestUntil).toLocaleString('en-IN')}</strong> due to moderation review.
+          </p>
+          <div className="flex justify-start" style={{ marginTop: '0.5rem' }}>
+            <button
+              onClick={() => setShowChallengeModal(true)}
+              className="btn btn-danger btn-sm"
+              style={{ fontSize: '0.875rem' }}
+            >
+              Challenge Restriction
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Profile Header */}
       <div className="glass-panel p-6 m-b-6 flex align-center justify-between flex-wrap gap-4">
         <div className="flex align-center gap-4">
@@ -292,6 +333,28 @@ export default function ProfilePage() {
                     )}
                   </button>
                 </div>
+
+                {/* Notification Radius Slider */}
+                <div className="form-group" style={{ marginTop: '1rem' }}>
+                  <div className="flex justify-between align-center">
+                    <label className="form-label">Notification Radius</label>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--primary-color)' }}>
+                      {profile.notificationRadiusKm || 25} km
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5"
+                    max="100"
+                    step="5"
+                    value={profile.notificationRadiusKm || 25}
+                    onChange={(e) => handleUpdateField('notificationRadiusKm', parseInt(e.target.value, 10))}
+                    style={{ width: '100%', accentColor: 'var(--primary-color)', cursor: 'pointer' }}
+                  />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Only receive emergency blood request alerts within this distance from your location.
+                  </p>
+                </div>
               </>
             )}
 
@@ -325,6 +388,30 @@ export default function ProfilePage() {
                 ))}
               </select>
             </div>
+
+            {/* Service Radius Slider for Organizations */}
+            {user?.role === 'ORG' && (
+              <div className="form-group" style={{ marginTop: '1rem' }}>
+                <div className="flex justify-between align-center">
+                  <label className="form-label">Service Radius</label>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--primary-color)' }}>
+                    {profile.serviceRadiusKm || 50} km
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="200"
+                  step="10"
+                  value={profile.serviceRadiusKm || 50}
+                  onChange={(e) => handleUpdateField('serviceRadiusKm', parseInt(e.target.value, 10))}
+                  style={{ width: '100%', accentColor: 'var(--primary-color)', cursor: 'pointer' }}
+                />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  Requests posted within this distance from your hospital will show in your Supply Feed.
+                </p>
+              </div>
+            )}
 
             {/* Geolocation update — enables geospatial donor matching */}
             <div className="form-group" style={{ marginTop: '0.5rem' }}>
@@ -895,6 +982,78 @@ export default function ProfilePage() {
                     </>
                   ) : (
                     <span>Submit Dispute</span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Challenge Modal */}
+      {showChallengeModal && (
+        <div className="modal-overlay">
+          <div className="modal-content card" style={{ backgroundColor: 'var(--surface-color)', maxWidth: '500px' }}>
+            <h3 style={{ fontWeight: 700, color: '#fff', marginBottom: '1rem' }} className="flex align-center gap-2">
+              <AlertCircle color="var(--primary-color)" />
+              <span>Challenge Request Restriction</span>
+            </h3>
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.25rem' }}>
+              If you believe your request creation privileges were restricted in error, please explain why and provide any supporting details. An administrator will review your challenge.
+            </p>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              challengeMutation.mutate({
+                reason: challengeReason,
+                evidence: challengeEvidence
+              });
+            }} className="flex flex-col gap-4">
+              <div className="form-group">
+                <label className="form-label">Reason details (Mandatory)</label>
+                <textarea 
+                  className="form-input" 
+                  rows={4}
+                  placeholder="Explain exactly why this restriction is incorrect or should be lifted..."
+                  value={challengeReason}
+                  onChange={e => setChallengeReason(e.target.value)}
+                  style={{ resize: 'vertical' }}
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Supporting Evidence / Text (Optional)</label>
+                <input 
+                  type="text" 
+                  className="form-input" 
+                  placeholder="e.g. references to previous valid requests or other context"
+                  value={challengeEvidence}
+                  onChange={e => setChallengeEvidence(e.target.value)}
+                />
+              </div>
+
+              <div className="flex gap-3" style={{ marginTop: '0.5rem' }}>
+                <button 
+                  type="button"
+                  onClick={() => setShowChallengeModal(false)} 
+                  className="btn btn-secondary flex-1"
+                  disabled={challengeMutation.isPending}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary flex-1"
+                  disabled={challengeMutation.isPending}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                >
+                  {challengeMutation.isPending ? (
+                    <>
+                      <Loader2 className="animate-spin" size={16} />
+                      <span>Submitting...</span>
+                    </>
+                  ) : (
+                    <span>Submit Challenge</span>
                   )}
                 </button>
               </div>

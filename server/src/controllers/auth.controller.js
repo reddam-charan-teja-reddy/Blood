@@ -340,6 +340,7 @@ export const me = async (req, res, next) => {
       email: user.email,
       role: user.role,
       phoneVerified: user.phoneVerified,
+      restrictRequestUntil: user.restrictRequestUntil,
       profile,
     });
   } catch (error) {

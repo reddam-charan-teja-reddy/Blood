@@ -38,6 +38,9 @@ const UserSchema = new mongoose.Schema({
   suspendedReason: {
     type: String,
   },
+  restrictRequestUntil: {
+    type: Date,
+  },
   // Patient-convenience fields
   guardianName: {
     type: String,
@@ -50,9 +53,29 @@ const UserSchema = new mongoose.Schema({
     enum: ['PHONE', 'WHATSAPP', 'APP'],
     default: 'PHONE',
   },
+  // Regional Moderation / Scoped Admin Capabilities
+  moderationCity: {
+    type: String,
+    trim: true,
+  },
+  moderationRadiusKm: {
+    type: Number,
+  },
+  moderationLocation: {
+    type: {
+      type: String,
+      enum: ['Point'],
+    },
+    coordinates: {
+      type: [Number], // [longitude, latitude]
+      default: undefined,
+    },
+  },
 }, {
   timestamps: true,
 });
+
+UserSchema.index({ moderationLocation: '2dsphere' }, { sparse: true });
 
 UserSchema.index({ role: 1 });
 

@@ -4,7 +4,11 @@ const DisputeSchema = new mongoose.Schema({
   interestId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'DonorInterest',
-    required: true,
+  },
+  type: {
+    type: String,
+    enum: ['NO_SHOW_PENALTY', 'RESTRICTION'],
+    default: 'NO_SHOW_PENALTY',
   },
   filedById: {
     type: mongoose.Schema.Types.ObjectId,
