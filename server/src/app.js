@@ -39,7 +39,7 @@ const authLimiter = rateLimit({
 
 // Middleware
 app.use(cors({
-  origin: config.CORS_ORIGIN.split(',').map(o => o.trim()),
+  origin: config.CORS_ORIGIN.split(',').map(o => o.trim().replace(/\/$/, '')),
   credentials: true,
 }));
 app.use(express.json());
