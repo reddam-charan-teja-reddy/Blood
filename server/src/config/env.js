@@ -33,6 +33,10 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  REDIS_URL: z.string().optional().default("redis://127.0.0.1:6379"),
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  LOG_FORMAT: z.enum(["json", "pretty"]).default(process.env.NODE_ENV === "production" ? "json" : "pretty"),
+  ENABLE_HTTP_LOGGING: z.preprocess((val) => val === undefined ? true : val === 'true' || val === true, z.boolean()).default(true),
 });
 
 const parseEnv = () => {
