@@ -1,12 +1,18 @@
+import http from 'http';
+import crypto from 'crypto';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
+import mongoose from 'mongoose';
 import { config } from './config/env.js';
 import { connectDB } from './config/db.js';
 import { startCronJobs } from './services/cron.service.js';
+import { initSocket } from './services/socket.service.js';
+import { redis } from './services/redis.service.js';
+import { logger, httpLogger } from './utils/logger.js';
 
 import authRoutes from './routes/auth.routes.js';
 import donorRoutes from './routes/donor.routes.js';
@@ -14,12 +20,12 @@ import requestRoutes from './routes/request.routes.js';
 import orgRoutes from './routes/org.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
-import dns from "node:dns/promises"; // Or const dns = require("node:dns/promises");
-dns.setServers(["1.1.1.1", "8.8.8.8"]);
+import dns from 'node:dns/promises';
+dns.setServers(['1.1.1.1', '8.8.8.8']);
 
 const app = express();
-
-
+const server = http.createServer(app);
+const io = initSocket(server);
 
 // Connect to Database (Only if not in test env)
 if (config.NODE_ENV !== 'test') {
@@ -28,11 +34,19 @@ if (config.NODE_ENV !== 'test') {
   startCronJobs();
 }
 
-// Rate Limiting for Auth/OTP routes
+// Dedicated Rate Limiters
+const otpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: { error: 'Too many OTP requests. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 500, // limit each IP to 500 requests per windowMs
-  message: { error: 'Too many requests from this IP, please try again after 15 minutes' },
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: { error: 'Too many authentication attempts. Please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -53,26 +67,42 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+// HTTP Structured Logging with Correlation ID
+app.use(httpLogger);
+
 // Serve static upload assets
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Request logging middleware
-app.use((req, res, next) => {
-  if (config.NODE_ENV !== 'test') {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  }
-  next();
-});
-
 // API Routes
+app.use('/api/v1/auth/otp', otpLimiter);
 app.use('/api/v1/auth', authLimiter, authRoutes);
 app.use('/api/v1/donors', donorRoutes);
 app.use('/api/v1/requests', requestRoutes);
 app.use('/api/v1/orgs', orgRoutes);
 app.use('/api/v1/admin', adminRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
+
+// Health Check Endpoint
+app.get('/api/v1/health', async (req, res) => {
+  const mongoConnected = mongoose.connection.readyState === 1;
+  const redisConnected = redis.isReady();
+  res.json({
+    status: mongoConnected ? 'UP' : 'DEGRADED',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    services: {
+      mongodb: mongoConnected ? 'CONNECTED' : 'DISCONNECTED',
+      redis: redisConnected ? 'CONNECTED' : 'FALLBACK_MEMORY',
+    },
+    environment: config.NODE_ENV,
+    memoryUsage: {
+      rssMb: Math.round(process.memoryUsage().rss / (1024 * 1024)),
+      heapUsedMb: Math.round(process.memoryUsage().heapUsed / (1024 * 1024)),
+    },
+  });
+});
 
 // Base route for API check
 app.get('/api/v1', (req, res) => {
@@ -86,7 +116,12 @@ app.use((req, res) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error('💥 Global Error Handler:', err);
+  logger.error(`Global Error Handler: ${err.message}`, {
+    reqId: req?.id || 'unknown',
+    error: err,
+    path: req?.originalUrl || req?.url,
+    method: req?.method,
+  });
 
   if (err.name === 'ValidationError') {
     return res.status(400).json({ error: err.message });
@@ -105,9 +140,10 @@ app.use((err, req, res, next) => {
 
 // Listen on Port
 if (config.NODE_ENV !== 'test') {
-  app.listen(config.PORT, () => {
+  server.listen(config.PORT, () => {
     console.log(`🚀 Server running in ${config.NODE_ENV} mode on port ${config.PORT}`);
   });
 }
 
+export { app, server, io };
 export default app;

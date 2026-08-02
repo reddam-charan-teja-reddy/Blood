@@ -4,6 +4,7 @@ import { BloodRequest } from '../models/BloodRequest.js';
 
 async function migrateFlags() {
   try {
+    if (mongoose.connection.readyState !== 1) return;
     const requests = await BloodRequest.find({
       flaggedBy: { $exists: true, $not: { $size: 0 } }
     });
@@ -47,3 +48,35 @@ export const connectDB = async () => {
     process.exit(1);
   }
 };
+
+/**
+ * Enterprise database transaction wrapper.
+ * Automatically executes within a MongoDB replica-set transaction when available,
+ * or safely falls back to standard sequential execution in standalone environments.
+ */
+export const withTransaction = async (callback) => {
+  const session = await mongoose.startSession();
+  const topologyType = mongoose.connection.client?.topology?.description?.type || '';
+  const isReplicaSet = topologyType.includes('ReplicaSet');
+
+  if (!isReplicaSet) {
+    try {
+      return await callback(null);
+    } finally {
+      await session.endSession();
+    }
+  }
+
+  try {
+    session.startTransaction();
+    const result = await callback(session);
+    await session.commitTransaction();
+    return result;
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+};
+
