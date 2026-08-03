@@ -7,6 +7,7 @@ import { DonorInterest } from '../models/DonorInterest.js';
 import { Message } from '../models/Message.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt.js';
 import { sendOTP, verifyOTP } from '../services/otp.service.js';
+import { config } from '../config/env.js';
 
 export const register = async (req, res, next) => {
   try {
@@ -76,12 +77,12 @@ export const register = async (req, res, next) => {
 
     // Issue tokens
     const accessToken = signAccessToken({ userId: user._id, role: user.role });
-    const refreshToken = signRefreshToken({ userId: user._id });
+    const refreshToken = signRefreshToken({ userId: user._id, tokenVersion: user.tokenVersion || 0 });
 
     // Set cookie
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
@@ -142,7 +143,7 @@ export const login = async (req, res, next) => {
         }
       } else {
         // No password provided -> trigger OTP send
-        sendOTP(user.phone, 'AUTH');
+        await sendOTP(user.phone, 'AUTH');
         return res.json({
           otpRequired: true,
           phone: user.phone,
@@ -153,11 +154,11 @@ export const login = async (req, res, next) => {
 
     // Log in
     const accessToken = signAccessToken({ userId: user._id, role: user.role });
-    const refreshToken = signRefreshToken({ userId: user._id });
+    const refreshToken = signRefreshToken({ userId: user._id, tokenVersion: user.tokenVersion || 0 });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -201,7 +202,7 @@ export const otpSend = async (req, res, next) => {
     // If user does not exist, allow OTP for registration purposes only
     // (frontend sends this during phone verification step of sign-up).
     // We do NOT reveal whether the phone is registered to avoid enumeration.
-    sendOTP(phone, 'AUTH');
+    await sendOTP(phone, 'AUTH');
     res.json({ success: true, message: 'OTP sent successfully' });
   } catch (error) {
     next(error);
@@ -215,9 +216,13 @@ export const otpVerify = async (req, res, next) => {
       return res.status(400).json({ error: 'Phone and OTP are required' });
     }
 
-    const verification = verifyOTP(phone, otp, 'AUTH');
+    const verification = await verifyOTP(phone, otp, 'AUTH');
     if (!verification.valid) {
-      return res.status(400).json({ error: verification.reason || 'Invalid OTP' });
+      return res.status(400).json({
+        error: verification.reason || 'Invalid OTP',
+        message: verification.message,
+        attemptsRemaining: verification.attemptsRemaining,
+      });
     }
 
     // Find or create user if logging in / verifying
@@ -232,11 +237,11 @@ export const otpVerify = async (req, res, next) => {
     }
 
     const accessToken = signAccessToken({ userId: user._id, role: user.role });
-    const refreshToken = signRefreshToken({ userId: user._id });
+    const refreshToken = signRefreshToken({ userId: user._id, tokenVersion: user.tokenVersion || 0 });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
@@ -259,9 +264,14 @@ export const otpVerify = async (req, res, next) => {
 
 export const logout = async (req, res, next) => {
   try {
+    // Invalidate refresh tokens across devices by bumping tokenVersion
+    if (req.user?.id) {
+      await User.findByIdAndUpdate(req.user.id, { $inc: { tokenVersion: 1 } });
+    }
+
     res.clearCookie('refreshToken', {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.NODE_ENV === 'production',
       sameSite: 'strict',
     });
     res.json({ success: true, message: 'Logged out successfully' });
@@ -293,12 +303,22 @@ export const refresh = async (req, res, next) => {
       return res.status(403).json({ error: 'Account suspended' });
     }
 
+    // Check tokenVersion for instant revocation support
+    if (decoded.tokenVersion !== undefined && decoded.tokenVersion !== (user.tokenVersion || 0)) {
+      res.clearCookie('refreshToken', {
+        httpOnly: true,
+        secure: config.NODE_ENV === 'production',
+        sameSite: 'strict',
+      });
+      return res.status(401).json({ error: 'Refresh token has been revoked. Please sign in again.' });
+    }
+
     const accessToken = signAccessToken({ userId: user._id, role: user.role });
-    const newRefreshToken = signRefreshToken({ userId: user._id });
+    const newRefreshToken = signRefreshToken({ userId: user._id, tokenVersion: user.tokenVersion || 0 });
 
     res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: config.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });

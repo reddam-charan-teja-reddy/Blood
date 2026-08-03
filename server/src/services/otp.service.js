@@ -1,7 +1,6 @@
 import twilio from 'twilio';
 import { config } from '../config/env.js';
-
-const otpStore = new Map(); // Map<key, { otp, expiresAt }>
+import { redis } from './redis.service.js';
 
 let twilioClient = null;
 if (config.TWILIO_ACCOUNT_SID && config.TWILIO_AUTH_TOKEN) {
@@ -12,22 +11,27 @@ function generateOTP() {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-export function sendOTP(identifier, purpose = 'AUTH') {
+export async function sendOTP(identifier, purpose = 'AUTH') {
   const otp = generateOTP();
-  const key = `${purpose}:${identifier}`;
-  const ttl = purpose === 'CONTACT_REVEAL' ? 15 * 60 * 1000 : 10 * 60 * 1000; // 15 mins for contact reveal, 10 for auth
-  
-  otpStore.set(key, {
-    otp,
-    expiresAt: Date.now() + ttl,
-  });
+  const key = `otp:${purpose}:${identifier}`;
+  const ttlSeconds = purpose === 'CONTACT_REVEAL' ? 15 * 60 : 10 * 60;
+
+  await redis.set(
+    key,
+    JSON.stringify({
+      otp,
+      attempts: 0,
+      createdAt: Date.now(),
+    }),
+    ttlSeconds
+  );
 
   console.log(`\n========================================`);
   console.log(`[OTP SERVICE]`);
   console.log(`Purpose: ${purpose}`);
   console.log(`Target: ${identifier}`);
   console.log(`OTP Code: ${otp}`);
-  console.log(`Expires in: ${ttl / 1000 / 60} minutes`);
+  console.log(`Expires in: ${ttlSeconds / 60} minutes`);
   console.log(`========================================\n`);
 
   if (twilioClient && config.TWILIO_PHONE_NUMBER) {
@@ -39,36 +43,51 @@ export function sendOTP(identifier, purpose = 'AUTH') {
       .create({
         body: messageBody,
         from: config.TWILIO_PHONE_NUMBER,
-        to: identifier
+        to: identifier,
       })
-      .then(message => console.log(`[Twilio SMS Sent] SID: ${message.sid}`))
-      .catch(err => console.error(`[Twilio SMS Error]`, err));
+      .then((message) => console.log(`[Twilio SMS Sent] SID: ${message.sid}`))
+      .catch((err) => console.error(`[Twilio SMS Error]`, err));
   }
 
-  return { sent: true, otp }; // Return OTP for testing/seeding convenience if needed, but primarily logs to console
+  return { sent: true, otp };
 }
 
-export function verifyOTP(identifier, inputOtp, purpose = 'AUTH') {
+export async function verifyOTP(identifier, inputOtp, purpose = 'AUTH') {
   if (config.BYPASS_OTP === true && inputOtp === '123456') {
     return { valid: true };
   }
 
-  const key = `${purpose}:${identifier}`;
-  const record = otpStore.get(key);
+  const key = `otp:${purpose}:${identifier}`;
+  const raw = await redis.get(key);
 
-  if (!record) {
+  if (!raw) {
     return { valid: false, reason: 'OTP_NOT_FOUND' };
   }
 
-  if (Date.now() > record.expiresAt) {
-    otpStore.delete(key);
-    return { valid: false, reason: 'OTP_EXPIRED' };
+  let record;
+  try {
+    record = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    record = { otp: raw, attempts: 0 };
+  }
+
+  // Brute-force protection: max 5 attempts per OTP
+  if (record.attempts >= 5) {
+    await redis.del(key);
+    return { valid: false, reason: 'TOO_MANY_ATTEMPTS', message: 'Too many incorrect attempts. Please request a new OTP.' };
   }
 
   if (record.otp !== inputOtp) {
-    return { valid: false, reason: 'OTP_INVALID' };
+    record.attempts = (record.attempts || 0) + 1;
+    if (record.attempts >= 5) {
+      await redis.del(key);
+      return { valid: false, reason: 'TOO_MANY_ATTEMPTS', message: 'Too many incorrect attempts. Please request a new OTP.' };
+    }
+    await redis.set(key, JSON.stringify(record), 600);
+    return { valid: false, reason: 'OTP_INVALID', attemptsRemaining: 5 - record.attempts };
   }
 
-  otpStore.delete(key); // One-time use
+  // Success - single use
+  await redis.del(key);
   return { valid: true };
 }

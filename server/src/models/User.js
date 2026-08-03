@@ -41,6 +41,10 @@ const UserSchema = new mongoose.Schema({
   restrictRequestUntil: {
     type: Date,
   },
+  tokenVersion: {
+    type: Number,
+    default: 0,
+  },
   // Patient-convenience fields
   guardianName: {
     type: String,
