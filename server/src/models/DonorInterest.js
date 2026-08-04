@@ -16,6 +16,7 @@ const DonorInterestSchema = new mongoose.Schema({
     enum: [
       'INTERESTED',
       'RESERVED',
+      'WAITLISTED',
       'REVEAL_PENDING',
       'CONTACT_REVEALED',
       'CONFIRMED',

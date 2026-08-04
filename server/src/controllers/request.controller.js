@@ -11,6 +11,9 @@ import { computeEligibility } from '../services/eligibility.service.js';
 import { findMatchingDonors } from '../services/matching.service.js';
 import { OrgProfile } from '../models/OrgProfile.js';
 import { InventoryLog } from '../models/InventoryLog.js';
+import { redis } from '../services/redis.service.js';
+import { emitToRequest, emitToUser } from '../services/socket.service.js';
+import { withTransaction } from '../config/db.js';
 
 export const getRequests = async (req, res, next) => {
   try {
@@ -18,6 +21,14 @@ export const getRequests = async (req, res, next) => {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 20));
     const skip = (pageNum - 1) * limitNum;
+
+    const cacheKey = `cache:requests:${bloodGroup || 'all'}:${urgency || 'all'}:${component || 'all'}:${city || 'all'}:${sortBy || 'default'}:${compatibleOnly || 'false'}:p${pageNum}:l${limitNum}`;
+    const cachedData = await redis.get(cacheKey);
+    if (cachedData) {
+      try {
+        return res.json(JSON.parse(cachedData));
+      } catch {}
+    }
 
     const filter = {
       // Show both ACTIVE and PARTIALLY_FULFILLED — a partially filled request
@@ -52,13 +63,18 @@ export const getRequests = async (req, res, next) => {
       .limit(limitNum)
       .lean();
 
-    res.json({
+    const responsePayload = {
       requests,
       count: requests.length,
       total,
       page: pageNum,
       pages: Math.ceil(total / limitNum),
-    });
+    };
+
+    // Cache results in Redis with 30s TTL
+    await redis.set(cacheKey, JSON.stringify(responsePayload), 30);
+
+    res.json(responsePayload);
   } catch (error) {
     next(error);
   }
@@ -145,7 +161,7 @@ export const createRequest = async (req, res, next) => {
         const matched = await findMatchingDonors(request);
         if (matched.length > 0) {
           const notifications = matched.map((donorProfile) => ({
-            userId: donorProfile.userId._id || donorProfile.userId,
+            userId: donorProfile.userId?._id || donorProfile.userId,
             type: urgency === 'EMERGENCY' ? 'EMERGENCY_REQUEST' : 'NEW_REQUEST_MATCH',
             title: urgency === 'EMERGENCY'
               ? `🚨 Emergency ${bloodGroup} needed at ${hospitalName}`
@@ -155,12 +171,17 @@ export const createRequest = async (req, res, next) => {
             link: `/request/${request._id}`,
           }));
           await Notification.insertMany(notifications);
+          // Broadcast real-time notifications to online matching donors
+          notifications.forEach((notif) => {
+            emitToUser(notif.userId.toString(), 'new_notification', notif);
+          });
         }
       } catch (err) {
         console.error('[createRequest] Matching fan-out error:', err.message);
       }
     });
 
+    await redis.delByPattern('cache:requests:*');
     res.status(201).json(request);
   } catch (error) {
     next(error);
@@ -206,16 +227,10 @@ export const getRequestById = async (req, res, next) => {
       }
     }
 
-    // Expire stale RESERVED interests (older than 1 hour) before returning
-    // This releases reservations from donors who reserved and then disappeared,
-    // ensuring the request is no longer shown as blocked to other donors.
+    // Active reservations are those within 1 hour; stale ones are cleaned up asynchronously by cron
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    await DonorInterest.updateMany(
-      { requestId: id, status: 'RESERVED', reservedAt: { $lt: oneHourAgo } },
-      { status: 'WITHDRAWN' }
-    );
 
-    // Check if request is currently reserved (after cleanup)
+    // Check if request is currently reserved
     const activeReservation = await DonorInterest.findOne({
       requestId: id,
       status: 'RESERVED',
@@ -223,6 +238,7 @@ export const getRequestById = async (req, res, next) => {
     });
     requestObj.isReserved = !!activeReservation;
     requestObj.reservedByMe = activeReservation && req.user && activeReservation.donorId.toString() === req.user.id;
+    requestObj.waitlistCount = await DonorInterest.countDocuments({ requestId: id, status: 'WAITLISTED' });
 
     // If owner or admin, fetch donor interests
     let interests = [];
@@ -334,6 +350,7 @@ export const updateRequest = async (req, res, next) => {
     }
 
     await request.save();
+    await redis.delByPattern('cache:requests:*');
 
     res.json(request);
   } catch (error) {
@@ -390,6 +407,7 @@ export const deleteRequest = async (req, res, next) => {
       { status: 'WITHDRAWN' }
     );
 
+    await redis.delByPattern('cache:requests:*');
     res.json({ success: true, message: 'Request cancelled successfully' });
   } catch (error) {
     next(error);
@@ -415,6 +433,7 @@ export const fulfilRequest = async (req, res, next) => {
     request.status = 'FULFILLED';
     request.fulfilledAt = new Date();
     await request.save();
+    await redis.delByPattern('cache:requests:*');
 
     res.json({ success: true, message: 'Request marked fulfilled successfully', request });
   } catch (error) {
@@ -504,6 +523,7 @@ export const expressInterest = async (req, res, next) => {
       ]
     });
 
+    let isWaitlist = false;
     if (activeCoordinationsCount >= unitsRemaining) {
       const userIsActiveCoordinator = await DonorInterest.findOne({
         requestId: id,
@@ -515,15 +535,23 @@ export const expressInterest = async (req, res, next) => {
         ]
       });
       if (!userIsActiveCoordinator) {
-        return res.status(403).json({ error: 'This request is temporarily fully reserved by other donors for travel coordination.' });
+        if (req.body.waitlist === true) {
+          isWaitlist = true;
+        } else {
+          return res.status(403).json({
+            error: 'This request is temporarily fully reserved by other donors for travel coordination.',
+            canWaitlist: true,
+            message: 'You can join the waitlist to be automatically promoted if a slot becomes available.',
+          });
+        }
       }
     }
 
     // Check duplicate interest
     const existingInterest = await DonorInterest.findOne({ requestId: id, donorId: req.user.id });
     if (existingInterest) {
-      if (['RESERVED', 'WITHDRAWN', 'DECLINED'].includes(existingInterest.status)) {
-        existingInterest.status = 'INTERESTED';
+      if (['RESERVED', 'WITHDRAWN', 'DECLINED', 'WAITLISTED'].includes(existingInterest.status)) {
+        existingInterest.status = isWaitlist ? 'WAITLISTED' : 'INTERESTED';
         if (eta) {
           existingInterest.eta = new Date(eta);
         } else {
@@ -538,7 +566,7 @@ export const expressInterest = async (req, res, next) => {
     const interest = await DonorInterest.create({
       requestId: id,
       donorId: req.user.id,
-      status: 'INTERESTED',
+      status: isWaitlist ? 'WAITLISTED' : 'INTERESTED',
       eta: eta ? new Date(eta) : undefined,
     });
 
@@ -577,53 +605,64 @@ export const reserveRequest = async (req, res, next) => {
       });
     }
 
-    // Check if the request is already fully covered by active reservations/coordinations
-    const unitsRemaining = request.unitsNeeded - (request.unitsConfirmed || 0);
-    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    // Acquire atomic lock for slot capacity check and reservation
+    const lockKey = `lock:reserve:${id}`;
+    const lockToken = await redis.acquireLock(lockKey, 5);
+    if (!lockToken) {
+      return res.status(409).json({ error: 'Another donor is coordinating this slot right now. Please retry in a few seconds.' });
+    }
 
-    const activeCoordinationsCount = await DonorInterest.countDocuments({
-      requestId: id,
-      status: { $in: ['RESERVED', 'REVEAL_PENDING', 'CONTACT_REVEALED', 'CONFIRMED'] },
-      $or: [
-        { status: { $ne: 'RESERVED' } },
-        { status: 'RESERVED', reservedAt: { $gt: oneHourAgo } }
-      ]
-    });
+    try {
+      // Check if the request is already fully covered by active reservations/coordinations
+      const unitsRemaining = request.unitsNeeded - (request.unitsConfirmed || 0);
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
-    if (activeCoordinationsCount >= unitsRemaining) {
-      const userIsActiveCoordinator = await DonorInterest.findOne({
+      const activeCoordinationsCount = await DonorInterest.countDocuments({
         requestId: id,
-        donorId: req.user.id,
         status: { $in: ['RESERVED', 'REVEAL_PENDING', 'CONTACT_REVEALED', 'CONFIRMED'] },
         $or: [
           { status: { $ne: 'RESERVED' } },
           { status: 'RESERVED', reservedAt: { $gt: oneHourAgo } }
         ]
       });
-      if (!userIsActiveCoordinator) {
-        return res.status(403).json({ error: 'This request is temporarily fully reserved by other donors for travel coordination.' });
+
+      if (activeCoordinationsCount >= unitsRemaining) {
+        const userIsActiveCoordinator = await DonorInterest.findOne({
+          requestId: id,
+          donorId: req.user.id,
+          status: { $in: ['RESERVED', 'REVEAL_PENDING', 'CONTACT_REVEALED', 'CONFIRMED'] },
+          $or: [
+            { status: { $ne: 'RESERVED' } },
+            { status: 'RESERVED', reservedAt: { $gt: oneHourAgo } }
+          ]
+        });
+        if (!userIsActiveCoordinator) {
+          return res.status(403).json({ error: 'This request is temporarily fully reserved by other donors for travel coordination.' });
+        }
       }
+
+      // Check duplicate interest
+      const existingInterest = await DonorInterest.findOne({ requestId: id, donorId: req.user.id });
+      if (existingInterest) {
+        existingInterest.status = 'RESERVED';
+        existingInterest.reservedAt = new Date();
+        if (eta) existingInterest.eta = new Date(eta);
+        await existingInterest.save();
+        return res.json({ success: true, interest: existingInterest });
+      }
+
+      const interest = await DonorInterest.create({
+        requestId: id,
+        donorId: req.user.id,
+        status: 'RESERVED',
+        reservedAt: new Date(),
+        eta: eta ? new Date(eta) : undefined,
+      });
+
+      res.status(201).json(interest);
+    } finally {
+      await redis.releaseLock(lockKey, lockToken);
     }
-
-    // Check duplicate interest
-    const existingInterest = await DonorInterest.findOne({ requestId: id, donorId: req.user.id });
-    if (existingInterest) {
-      existingInterest.status = 'RESERVED';
-      existingInterest.reservedAt = new Date();
-      if (eta) existingInterest.eta = new Date(eta);
-      await existingInterest.save();
-      return res.json({ success: true, interest: existingInterest });
-    }
-
-    const interest = await DonorInterest.create({
-      requestId: id,
-      donorId: req.user.id,
-      status: 'RESERVED',
-      reservedAt: new Date(),
-      eta: eta ? new Date(eta) : undefined,
-    });
-
-    res.status(201).json(interest);
   } catch (error) {
     next(error);
   }
@@ -704,7 +743,7 @@ export const revealContact = async (req, res, next) => {
     await interest.save();
 
     // Trigger OTP sending to donor's phone
-    sendOTP(interest.donorId.phone, 'CONTACT_REVEAL');
+    await sendOTP(interest.donorId.phone, 'CONTACT_REVEAL');
 
     res.json({
       success: true,
@@ -737,9 +776,13 @@ export const confirmReveal = async (req, res, next) => {
     }
 
     // Verify OTP
-    const verification = verifyOTP(interest.donorId.phone, otp, 'CONTACT_REVEAL');
+    const verification = await verifyOTP(interest.donorId.phone, otp, 'CONTACT_REVEAL');
     if (!verification.valid) {
-      return res.status(400).json({ error: verification.reason || 'Invalid OTP' });
+      return res.status(400).json({
+        error: verification.reason || 'Invalid OTP',
+        message: verification.message,
+        attemptsRemaining: verification.attemptsRemaining,
+      });
     }
 
     interest.status = 'CONTACT_REVEALED';
@@ -800,6 +843,16 @@ export const reportOutcome = async (req, res, next) => {
       return res.status(403).json({ error: 'Unauthorized to report outcome' });
     }
 
+    // Idempotency: Prevent overriding already submitted outcome for a side
+    if (!isAdmin) {
+      if (isDonor && interest.donorOutcome) {
+        return res.status(400).json({ error: 'You have already submitted your outcome for this donation slot.' });
+      }
+      if (isRequester && interest.requesterOutcome) {
+        return res.status(400).json({ error: 'You have already submitted your outcome for this donation slot.' });
+      }
+    }
+
     // Set the specific outcome fields
     if (isAdmin) {
       interest.donorOutcome = outcome;
@@ -813,63 +866,71 @@ export const reportOutcome = async (req, res, next) => {
     // Check if both sides have submitted outcomes
     if (interest.donorOutcome && interest.requesterOutcome) {
       if (interest.donorOutcome === interest.requesterOutcome) {
-        // Both sides agree, finalize the outcome
-        interest.status = outcome;
-        interest.outcomeReportedAt = new Date();
-        if (outcomeReason) interest.outcomeReason = outcomeReason;
-        await interest.save();
+        // Both sides agree, finalize the outcome atomically with transaction support
+        await withTransaction(async (session) => {
+          interest.status = outcome;
+          interest.outcomeReportedAt = new Date();
+          if (outcomeReason) interest.outcomeReason = outcomeReason;
+          await interest.save(session ? { session } : undefined);
 
-        if (outcome === 'DONATED') {
-          // 1. Update donor profile reputation + last donation date
-          const donorProfile = await DonorProfile.findOne({ userId: interest.donorId });
-          if (donorProfile) {
-            donorProfile.totalDonations += 1;
-            if (request.component === 'PLATELETS') {
-              donorProfile.lastPlateletDonation = new Date();
-            } else if (request.component === 'PLASMA') {
-              donorProfile.lastPlasmaDonation = new Date();
+          if (outcome === 'DONATED') {
+            // 1. Update donor profile reputation + last donation date
+            const donorQuery = DonorProfile.findOne({ userId: interest.donorId });
+            const donorProfile = session ? await donorQuery.session(session) : await donorQuery;
+            if (donorProfile) {
+              donorProfile.totalDonations += 1;
+              donorProfile.reputationScore = Math.max(0, Math.min(100, Math.round(50 + (donorProfile.totalDonations * 10) - ((donorProfile.noShowCount || 0) * 25))));
+              if (request.component === 'PLATELETS') {
+                donorProfile.lastPlateletDonation = new Date();
+              } else if (request.component === 'PLASMA') {
+                donorProfile.lastPlasmaDonation = new Date();
+              } else {
+                donorProfile.lastWholeBloodDonation = new Date();
+              }
+              await donorProfile.save(session ? { session } : undefined);
+            }
+
+            // Automatically decrement from OrgProfile inventory if donor is an ORG
+            const donorUserQuery = User.findById(interest.donorId);
+            const donorUser = session ? await donorUserQuery.session(session) : await donorUserQuery;
+            if (donorUser && donorUser.role === 'ORG') {
+              const orgQuery = OrgProfile.findOne({ userId: interest.donorId });
+              const orgProfile = session ? await orgQuery.session(session) : await orgQuery;
+              if (orgProfile) {
+                const bg = request.bloodGroup;
+                const currentInv = orgProfile.inventory[bg] || 0;
+                const newInv = Math.max(0, currentInv - 1);
+                orgProfile.inventory[bg] = newInv;
+                await orgProfile.save(session ? { session } : undefined);
+
+                await InventoryLog.create([{
+                  orgId: orgProfile._id,
+                  bloodGroup: bg,
+                  delta: -1,
+                  reason: `Blood Request Fulfilment: Request ID ${request._id}`,
+                }], session ? { session } : undefined);
+              }
+            }
+
+            // 2. Increment unitsConfirmed on the BloodRequest
+            request.unitsConfirmed = (request.unitsConfirmed || 0) + 1;
+            if (request.unitsConfirmed >= request.unitsNeeded) {
+              request.status = 'FULFILLED';
+              request.fulfilledAt = new Date();
             } else {
-              donorProfile.lastWholeBloodDonation = new Date();
+              request.status = 'PARTIALLY_FULFILLED';
             }
-            await donorProfile.save();
-          }
-
-          // Automatically decrement from OrgProfile inventory if donor is an ORG
-          const donorUser = await User.findById(interest.donorId);
-          if (donorUser && donorUser.role === 'ORG') {
-            const orgProfile = await OrgProfile.findOne({ userId: interest.donorId });
-            if (orgProfile) {
-              const bg = request.bloodGroup;
-              const currentInv = orgProfile.inventory[bg] || 0;
-              const newInv = Math.max(0, currentInv - 1);
-              orgProfile.inventory[bg] = newInv;
-              await orgProfile.save();
-
-              await InventoryLog.create({
-                orgId: orgProfile._id,
-                bloodGroup: bg,
-                delta: -1,
-                reason: `Blood Request Fulfilment: Request ID ${request._id}`,
-              });
+            await request.save(session ? { session } : undefined);
+          } else if (outcome === 'NO_SHOW') {
+            const donorQuery = DonorProfile.findOne({ userId: interest.donorId });
+            const donorProfile = session ? await donorQuery.session(session) : await donorQuery;
+            if (donorProfile) {
+              donorProfile.noShowCount += 1;
+              donorProfile.reputationScore = Math.max(0, Math.min(100, Math.round(50 + (donorProfile.totalDonations * 10) - (donorProfile.noShowCount * 25))));
+              await donorProfile.save(session ? { session } : undefined);
             }
           }
-
-          // 2. Increment unitsConfirmed on the BloodRequest
-          request.unitsConfirmed = (request.unitsConfirmed || 0) + 1;
-          if (request.unitsConfirmed >= request.unitsNeeded) {
-            request.status = 'FULFILLED';
-            request.fulfilledAt = new Date();
-          } else {
-            request.status = 'PARTIALLY_FULFILLED';
-          }
-          await request.save();
-        } else if (outcome === 'NO_SHOW') {
-          const donorProfile = await DonorProfile.findOne({ userId: interest.donorId });
-          if (donorProfile) {
-            donorProfile.noShowCount += 1;
-            await donorProfile.save();
-          }
-        }
+        });
       } else {
         // Outcomes mismatch - save outcomes but do not resolve the status
         await interest.save();
@@ -1040,6 +1101,9 @@ export const sendChatMessage = async (req, res, next) => {
     });
 
     const populatedMessage = await message.populate('senderId', 'fullName role');
+
+    // Real-time broadcast to request room
+    emitToRequest(id, 'new_message', populatedMessage);
 
     res.status(201).json(populatedMessage);
   } catch (error) {

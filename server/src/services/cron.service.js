@@ -1,6 +1,8 @@
 import cron from 'node-cron';
 import { BloodRequest } from '../models/BloodRequest.js';
 import { DonorInterest } from '../models/DonorInterest.js';
+import { Notification } from '../models/Notification.js';
+import { emitToUser } from './socket.service.js';
 
 /**
  * Scheduled job: Auto-expire blood requests that have passed their expiresAt date.
@@ -62,5 +64,56 @@ export function startCronJobs() {
     }
   });
 
-  console.log('[CRON] Scheduled jobs registered: request auto-expiry (every 30 min)');
+  // Stale reservation cleanup (reservations older than 1 hour without confirmation)
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const staleReservations = await DonorInterest.find({
+        status: 'RESERVED',
+        reservedAt: { $lt: oneHourAgo },
+      });
+
+      if (staleReservations.length > 0) {
+        const staleIds = staleReservations.map((r) => r._id);
+        await DonorInterest.updateMany(
+          { _id: { $in: staleIds } },
+          { $set: { status: 'WITHDRAWN' } }
+        );
+        console.log(`[CRON] Withdrew ${staleReservations.length} stale reservation(s) older than 1 hour.`);
+
+        // Auto-promote waitlisted donors for affected requests
+        const affectedRequestIds = [...new Set(staleReservations.map((r) => r.requestId.toString()))];
+        for (const reqId of affectedRequestIds) {
+          const waitlisted = await DonorInterest.findOne({
+            requestId: reqId,
+            status: 'WAITLISTED',
+          }).sort({ createdAt: 1 });
+
+          if (waitlisted) {
+            waitlisted.status = 'INTERESTED';
+            await waitlisted.save();
+            console.log(`[CRON] Auto-promoted waitlisted donor ${waitlisted.donorId} for request ${reqId}`);
+
+            try {
+              const notif = await Notification.create({
+                userId: waitlisted.donorId,
+                type: 'NEW_REQUEST_MATCH',
+                title: '⚡ Donation Slot Opened!',
+                message: 'A previous donor reservation expired. You have been promoted from the waitlist.',
+                relatedRequestId: reqId,
+                link: `/request/${reqId}`,
+              });
+              emitToUser(waitlisted.donorId.toString(), 'new_notification', notif);
+            } catch (err) {
+              console.error('[CRON] Failed to notify waitlisted donor:', err.message);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[CRON] Stale reservation cleanup failed:', error);
+    }
+  });
+
+  console.log('[CRON] Scheduled jobs registered: request auto-expiry (every 30 min), stale reservation cleanup (every 10 min)');
 }

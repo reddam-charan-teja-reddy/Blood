@@ -94,11 +94,15 @@ export const findMatchingDonors = async (bloodRequest) => {
       }).populate('userId', 'fullName phone');
     }
 
-    // Filter by actual eligibility (rest period check)
+    // Filter by actual eligibility (rest period check) and ensure user exists
     const matchedDonors = potentialDonors.filter((profile) => {
+      if (!profile.userId) return false;
       const eligibility = computeEligibility(profile, bloodRequest.component);
       return eligibility.eligible;
     });
+
+    // Rank matching donors by reputation score (higher score first)
+    matchedDonors.sort((a, b) => (b.reputationScore || 50) - (a.reputationScore || 50));
 
     return matchedDonors;
   } catch (error) {
