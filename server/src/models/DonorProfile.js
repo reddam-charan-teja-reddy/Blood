@@ -68,6 +68,7 @@ const DonorProfileSchema = new mongoose.Schema({
   totalDonations: { type: Number, default: 0 },
   noShowCount: { type: Number, default: 0 },
   responseRate: { type: Number, default: null },
+  reputationScore: { type: Number, default: 50 },
 
   // Notification preferences
   notifSmsEmergency: { type: Boolean, default: true },

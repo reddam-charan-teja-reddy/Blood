@@ -21,6 +21,7 @@ import {
   getAllRequests,
   getRequestByIdAdmin,
   updateModerationScope,
+  getAuditLogs,
 } from '../controllers/admin.controller.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireRole } from '../middleware/role.middleware.js';
@@ -32,6 +33,9 @@ router.use(requireRole('ADMIN'));
 
 // Moderation Scope configuration
 router.put('/moderation-scope', updateModerationScope);
+
+// Audit Logs
+router.get('/audit-logs', getAuditLogs);
 
 // Stats Overview
 router.get('/stats', getStats);

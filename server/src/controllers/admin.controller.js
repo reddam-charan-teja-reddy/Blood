@@ -4,6 +4,7 @@ import { OrgProfile } from '../models/OrgProfile.js';
 import { BloodRequest } from '../models/BloodRequest.js';
 import { DonorInterest } from '../models/DonorInterest.js';
 import { Dispute } from '../models/Dispute.js';
+import { AuditLog } from '../models/AuditLog.js';
 
 export const getStats = async (req, res, next) => {
   try {
@@ -237,6 +238,14 @@ export const verifyOrg = async (req, res, next) => {
     orgProfile.verifiedAt = new Date();
     await orgProfile.save();
 
+    await AuditLog.create({
+      adminId: req.user.id,
+      action: 'VERIFY_ORG',
+      targetId: orgProfile._id,
+      targetModel: 'OrgProfile',
+      ipAddress: req.ip,
+    });
+
     res.json({ success: true, message: 'Organization verified successfully' });
   } catch (error) {
     next(error);
@@ -259,6 +268,14 @@ export const rejectOrg = async (req, res, next) => {
     orgProfile.verificationStatus = 'REJECTED';
     orgProfile.documentPath = undefined; // clear rejected document
     await orgProfile.save();
+
+    await AuditLog.create({
+      adminId: req.user.id,
+      action: 'REJECT_ORG',
+      targetId: orgProfile._id,
+      targetModel: 'OrgProfile',
+      ipAddress: req.ip,
+    });
 
     res.json({ success: true, message: 'Organization verification rejected' });
   } catch (error) {
@@ -362,6 +379,15 @@ export const suspendUser = async (req, res, next) => {
     user.suspendedReason = reason || 'Violation of terms';
     await user.save();
 
+    await AuditLog.create({
+      adminId: req.user.id,
+      action: 'SUSPEND_USER',
+      targetId: user._id,
+      targetModel: 'User',
+      reason: user.suspendedReason,
+      ipAddress: req.ip,
+    });
+
     res.json({ success: true, message: 'User suspended successfully' });
   } catch (error) {
     next(error);
@@ -385,6 +411,14 @@ export const unsuspendUser = async (req, res, next) => {
     user.suspended = false;
     user.suspendedReason = null;
     await user.save();
+
+    await AuditLog.create({
+      adminId: req.user.id,
+      action: 'UNSUSPEND_USER',
+      targetId: user._id,
+      targetModel: 'User',
+      ipAddress: req.ip,
+    });
 
     res.json({ success: true, message: 'User unsuspended successfully' });
   } catch (error) {
@@ -687,10 +721,22 @@ export const resolveDispute = async (req, res, next) => {
         const donorProfile = await DonorProfile.findOne({ userId: dispute.filedById });
         if (donorProfile && donorProfile.noShowCount > 0) {
           donorProfile.noShowCount -= 1;
+          donorProfile.reputationScore = Math.max(0, Math.min(100, Math.round(50 + (donorProfile.totalDonations * 10) - (donorProfile.noShowCount * 25))));
           await donorProfile.save();
         }
       }
     }
+
+    // Write audit log
+    await AuditLog.create({
+      adminId: req.user.id,
+      action: status === 'OVERTURNED' ? 'OVERTURN_DISPUTE' : 'RESOLVE_DISPUTE',
+      targetId: dispute._id,
+      targetModel: 'Dispute',
+      reason: req.body.reason || `Dispute ${status.toLowerCase()} by admin`,
+      ipAddress: req.ip || req.socket?.remoteAddress,
+      metadata: { disputeType: dispute.type, filedById: dispute.filedById, resolution: status },
+    });
 
     res.json({ success: true, dispute });
   } catch (error) {
@@ -980,3 +1026,32 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 
   return R * c; // in metres
 }
+
+export const getAuditLogs = async (req, res, next) => {
+  try {
+    const { page = 1, limit = 20, action } = req.query;
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pageNum - 1) * limitNum;
+
+    const filter = {};
+    if (action) filter.action = action;
+
+    const total = await AuditLog.countDocuments(filter);
+    const logs = await AuditLog.find(filter)
+      .populate('adminId', 'fullName email phone role')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    res.json({
+      logs,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limitNum),
+    });
+  } catch (error) {
+    next(error);
+  }
+};
