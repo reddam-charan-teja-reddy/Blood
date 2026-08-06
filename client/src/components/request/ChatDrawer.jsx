@@ -4,18 +4,44 @@ import { api } from '../../lib/api';
 import { Send, X, MessageCircle, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+import { useSocket } from '../../hooks/useSocket';
+
 export default function ChatDrawer({ isOpen, onClose, requestId, currentUser }) {
   const queryClient = useQueryClient();
   const [messageText, setMessageText] = useState('');
   const messagesEndRef = useRef(null);
+  const socket = useSocket();
 
-  // Query to fetch messages with 3s refetch interval for live polling
+  // Query to fetch messages
   const { data: messages = [], isLoading } = useQuery({
     queryKey: ['chat', requestId],
     queryFn: () => api(`/requests/${requestId}/chat`),
     enabled: isOpen && !!requestId,
-    refetchInterval: isOpen ? 3000 : false,
+    refetchInterval: isOpen ? 10000 : false,
   });
+
+  // Real-time socket message handler
+  useEffect(() => {
+    if (!socket || !isOpen || !requestId) return;
+
+    socket.emit('join_request', requestId);
+
+    const handleNewMessage = (msg) => {
+      queryClient.setQueryData(['chat', requestId], (prev = []) => {
+        // Prevent duplicate messages if already present
+        if (prev.some(m => m._id === msg._id)) return prev;
+        return [...prev, msg];
+      });
+      scrollToBottom();
+    };
+
+    socket.on('new_message', handleNewMessage);
+
+    return () => {
+      socket.emit('leave_request', requestId);
+      socket.off('new_message', handleNewMessage);
+    };
+  }, [socket, isOpen, requestId]);
 
   const sendMutation = useMutation({
     mutationFn: (content) => api(`/requests/${requestId}/chat`, {
