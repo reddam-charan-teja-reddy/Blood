@@ -57,6 +57,7 @@ export default function CreateRequestPage() {
     mutationFn: (formData) => api('/requests', { method: 'POST', body: formData }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['requests'] });
+      queryClient.invalidateQueries({ queryKey: ['myRequests'] });
       toast.success('Request posted! Matching donors in your area are being notified.');
       navigate(`/request/${data._id}`);
     },

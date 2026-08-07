@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { Activity, User as UserIcon, LogOut, Menu, X, PlusCircle, Bell } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -10,6 +10,7 @@ export default function Navbar() {
   const { user, isAuthenticated, clearAuth } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
+  const queryClient = useQueryClient();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Fetch unread notification count (poll every 60s)
@@ -22,6 +23,27 @@ export default function Navbar() {
   });
   const unreadCount = notifData?.unreadCount || 0;
 
+  // Fetch donor profile for quick availability toggle
+  const { data: meData } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api('/auth/me'),
+    enabled: isAuthenticated && user?.role === 'INDIVIDUAL',
+    staleTime: 60000,
+  });
+  const isAvailable = meData?.profile?.available ?? false;
+
+  const toggleAvailability = async () => {
+    try {
+      await api('/donors/profile', {
+        method: 'PUT',
+        body: JSON.stringify({ available: !isAvailable }),
+      });
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+      toast.success(!isAvailable ? 'You are now marked AVAILABLE for donation' : 'Availability set to OFFLINE');
+    } catch (err) {
+      toast.error('Failed to update availability status');
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -56,7 +78,7 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Navigation */}
-        <div className="flex align-center gap-6">
+        <div className="desktop-nav flex align-center gap-6">
           {isAuthenticated ? (
             <>
               {/* Role specific links */}
@@ -64,6 +86,27 @@ export default function Navbar() {
                 <>
                   <Link to="/home" className={`nav-link ${isActive('/home') ? 'active' : ''}`}>Donate & Find</Link>
                   <Link to="/profile" className={`nav-link ${isActive('/profile') ? 'active' : ''}`}>My Profile</Link>
+                  <button
+                    onClick={toggleAvailability}
+                    className="btn btn-secondary btn-sm flex align-center gap-1"
+                    style={{
+                      padding: '0.3rem 0.6rem',
+                      fontSize: '0.75rem',
+                      borderColor: isAvailable ? 'var(--success-color)' : 'var(--border-color)',
+                      color: isAvailable ? 'var(--success-color)' : 'var(--text-secondary)',
+                      backgroundColor: isAvailable ? 'rgba(16, 185, 129, 0.1)' : 'transparent',
+                    }}
+                    title="Quick toggle donation availability"
+                  >
+                    <span style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '50%',
+                      backgroundColor: isAvailable ? 'var(--success-color)' : 'var(--text-muted)',
+                      boxShadow: isAvailable ? '0 0 6px var(--success-color)' : 'none',
+                    }} />
+                    <span>{isAvailable ? 'Available' : 'Offline'}</span>
+                  </button>
                 </>
               )}
 

@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { api } from '../lib/api';
 import { computeEligibility } from '../lib/eligibility';
-import { User, MapPin, Scale, Heart, Shield, ToggleLeft, ToggleRight, Award, Calendar, Check, AlertTriangle, AlertCircle, Loader2, Trash2 } from 'lucide-react';
+import { User, MapPin, Scale, Heart, Shield, ToggleLeft, ToggleRight, Award, Calendar, Check, AlertTriangle, AlertCircle, Loader2, Trash2, Star, TrendingUp } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import toast from 'react-hot-toast';
 import { INDIAN_STATES } from '../utils/indianStates';
 import { compressImage } from '../utils/compression';
@@ -91,6 +92,27 @@ export default function ProfilePage() {
   });
 
   const profile = meData?.profile || {};
+
+  const repScore = profile.reputationScore ?? 100;
+  const tierInfo = repScore >= 90
+    ? { label: 'Tier 1: Elite Donor', color: '#10b981', bg: 'rgba(16, 185, 129, 0.1)', border: 'rgba(16, 185, 129, 0.3)', desc: 'Priority dispatch in emergency matching' }
+    : repScore >= 75
+    ? { label: 'Tier 2: Verified Donor', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)', border: 'rgba(59, 130, 246, 0.3)', desc: 'Active reliable standing' }
+    : repScore >= 50
+    ? { label: 'Tier 3: Standard Donor', color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.3)', desc: 'Good standing' }
+    : { label: 'Restricted Standing', color: '#f43f5e', bg: 'rgba(244, 63, 94, 0.1)', border: 'rgba(244, 63, 94, 0.3)', desc: 'Requires dispute resolution' };
+
+  const donationChartData = React.useMemo(() => {
+    if (!donationHistoryData || !donationHistoryData.length) return [];
+    const map = {};
+    donationHistoryData.forEach((item) => {
+      const d = new Date(item.createdAt);
+      const monthKey = d.toLocaleString('default', { month: 'short', year: '2-digit' });
+      if (!map[monthKey]) map[monthKey] = { month: monthKey, donations: 0 };
+      if (item.status === 'DONATED') map[monthKey].donations += 1;
+    });
+    return Object.values(map).slice(-6);
+  }, [donationHistoryData]);
 
   const [isLoadingUpload, setIsLoadingUpload] = React.useState(false);
 
@@ -622,30 +644,95 @@ export default function ProfilePage() {
                 </button>
               </div>
 
-              {/* Reputation Statistics */}
-              <div className="grid grid-cols-2 gap-4">
-                <div style={{
-                  backgroundColor: 'rgba(16, 185, 129, 0.05)',
-                  border: '1px solid rgba(16, 185, 129, 0.2)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '1rem',
-                  textAlign: 'center'
-                }}>
-                  <Award size={20} color="var(--success-color)" style={{ margin: '0 auto 0.25rem' }} />
-                  <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>{profile.totalDonations || 0}</span>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Donations Completed</p>
+              {/* Reputation & Reliability Scorecard */}
+              <div style={{
+                backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                border: `1px solid ${tierInfo.border}`,
+                borderRadius: 'var(--radius-sm)',
+                padding: '1.25rem',
+                marginBottom: '1rem',
+              }}>
+                <div className="flex justify-between align-center" style={{ marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <div className="flex align-center gap-2">
+                    <Star size={18} color={tierInfo.color} style={{ fill: tierInfo.color }} />
+                    <span style={{ fontWeight: 700, color: '#fff', fontSize: '0.9375rem' }}>Reputation Scorecard</span>
+                  </div>
+                  <span style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    color: tierInfo.color,
+                    backgroundColor: tierInfo.bg,
+                    border: `1px solid ${tierInfo.border}`,
+                    padding: '0.2rem 0.6rem',
+                    borderRadius: '9999px',
+                  }}>
+                    {tierInfo.label}
+                  </span>
                 </div>
 
-                <div style={{
-                  backgroundColor: profile.noShowCount > 0 ? 'rgba(244, 63, 94, 0.05)' : 'rgba(100, 116, 139, 0.05)',
-                  border: profile.noShowCount > 0 ? '1px solid rgba(244, 63, 94, 0.2)' : '1px solid var(--border-color)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: '1rem',
-                  textAlign: 'center'
-                }}>
-                  <AlertTriangle size={20} color={profile.noShowCount > 0 ? 'var(--danger-color)' : 'var(--text-secondary)'} style={{ margin: '0 auto 0.25rem' }} />
-                  <span style={{ fontSize: '1.5rem', fontWeight: 800, color: '#fff' }}>{profile.noShowCount || 0}</span>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>No-Show Flags</p>
+                {/* Progress bar */}
+                <div style={{ marginBottom: '0.5rem' }}>
+                  <div className="flex justify-between align-center" style={{ fontSize: '0.75rem', marginBottom: '0.25rem' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>Reliability Rating</span>
+                    <span style={{ fontWeight: 700, color: tierInfo.color }}>{repScore} / 100</span>
+                  </div>
+                  <div style={{
+                    width: '100%',
+                    height: '8px',
+                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                    borderRadius: '4px',
+                    overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      width: `${Math.min(Math.max(repScore, 0), 100)}%`,
+                      height: '100%',
+                      backgroundColor: tierInfo.color,
+                      borderRadius: '4px',
+                      transition: 'width 0.4s ease',
+                    }} />
+                  </div>
+                </div>
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                  {tierInfo.desc}
+                </p>
+
+                {/* 3-Column Stats Grid */}
+                <div className="grid grid-cols-3 gap-2">
+                  <div style={{
+                    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '0.75rem 0.5rem',
+                    textAlign: 'center'
+                  }}>
+                    <Star size={16} color={tierInfo.color} style={{ margin: '0 auto 0.25rem' }} />
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>{repScore}%</span>
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)' }}>Reliability</p>
+                  </div>
+
+                  <div style={{
+                    backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                    border: '1px solid rgba(16, 185, 129, 0.2)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '0.75rem 0.5rem',
+                    textAlign: 'center'
+                  }}>
+                    <Award size={16} color="var(--success-color)" style={{ margin: '0 auto 0.25rem' }} />
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>{profile.totalDonations || 0}</span>
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)' }}>Donations</p>
+                  </div>
+
+                  <div style={{
+                    backgroundColor: profile.noShowCount > 0 ? 'rgba(244, 63, 94, 0.05)' : 'rgba(100, 116, 139, 0.05)',
+                    border: profile.noShowCount > 0 ? '1px solid rgba(244, 63, 94, 0.2)' : '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '0.75rem 0.5rem',
+                    textAlign: 'center'
+                  }}>
+                    <AlertTriangle size={16} color={profile.noShowCount > 0 ? 'var(--danger-color)' : 'var(--text-secondary)'} style={{ margin: '0 auto 0.25rem' }} />
+                    <span style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>{profile.noShowCount || 0}</span>
+                    <p style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)' }}>No-Shows</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -828,6 +915,39 @@ export default function ProfilePage() {
               <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem' }}>No donation interests logged yet.</p>
             ) : (
               <div className="flex flex-col gap-4">
+                {/* Donation Activity Visualization */}
+                {donationChartData.length > 0 && (
+                  <div style={{
+                    marginBottom: '0.5rem',
+                    padding: '1.25rem',
+                    backgroundColor: 'rgba(15, 23, 42, 0.4)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-color)'
+                  }}>
+                    <div className="flex justify-between align-center" style={{ marginBottom: '1rem' }}>
+                      <h4 style={{ fontWeight: 600, color: '#fff', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <TrendingUp size={16} color="var(--primary-color)" />
+                        <span>Monthly Donation Activity</span>
+                      </h4>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        Total completed: {profile.totalDonations || 0}
+                      </span>
+                    </div>
+                    <div style={{ height: '140px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={donationChartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                          <XAxis dataKey="month" stroke="var(--text-muted)" fontSize={11} tickLine={false} />
+                          <YAxis stroke="var(--text-muted)" fontSize={11} tickLine={false} allowDecimals={false} />
+                          <Tooltip
+                            contentStyle={{ backgroundColor: 'var(--surface-color)', borderColor: 'var(--border-color)', borderRadius: '6px', fontSize: '12px' }}
+                            itemStyle={{ color: '#fff' }}
+                          />
+                          <Bar dataKey="donations" name="Completed Donations" fill="var(--primary-color)" radius={[4, 4, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
                 {donationHistoryData.map((interest) => {
                   const req = interest.requestId;
                   if (!req) return null;

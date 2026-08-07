@@ -456,7 +456,7 @@ button, input, select, textarea {
   #mobile-toggle {
     display: none !important;
   }
-  .flex-desktop {
+  .desktop-nav {
     display: flex !important;
   }
 }
@@ -464,7 +464,7 @@ button, input, select, textarea {
   #mobile-toggle {
     display: inline-flex !important;
   }
-  div.flex.align-center.gap-6 {
+  .desktop-nav {
     display: none !important;
   }
 }

@@ -77,11 +77,17 @@ export default function RequestDetailPage() {
 
   const unitsRemaining = request ? request.unitsNeeded - (request.unitsConfirmed || 0) : 0;
 
-  const isOwner = user && request && request.requesterId?._id === user.id;
+  const isOwner = user && request && (
+    (request.requesterId?._id && String(request.requesterId._id) === String(user.id)) ||
+    (request.requesterId && String(request.requesterId) === String(user.id))
+  );
   const isAdmin = user?.role === 'ADMIN';
 
   // Check if current user is an interested donor
-  const myInterest = user && interests.find(i => i.donorId?._id === user.id);
+  const myInterest = user && interests.find(i => 
+    (i.donorId?._id && String(i.donorId._id) === String(user.id)) ||
+    (i.donorId && String(i.donorId) === String(user.id))
+  );
   const showConfirmDonationBox = myInterest && myInterest.requesterOutcome === 'DONATED' && !myInterest.donorOutcome;
 
   // Mutations
@@ -146,6 +152,9 @@ export default function RequestDetailPage() {
     }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['request', id || token] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      queryClient.invalidateQueries({ queryKey: ['myRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['historyDonations'] });
       toast.success('Donation outcome reported successfully!');
       setOutcomeModalOpen(false);
       setOutcome('DONATED');
@@ -158,6 +167,7 @@ export default function RequestDetailPage() {
     mutationFn: () => api(`/requests/${request?._id}/extend`, { method: 'POST' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['request', id || token] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
       toast.success('Request expiry extended by 24 hours');
     },
     onError: (err) => toast.error(err.message || 'Failed to extend request'),
@@ -167,6 +177,8 @@ export default function RequestDetailPage() {
     mutationFn: () => api(`/requests/${request?._id}`, { method: 'DELETE' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['request', id || token] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      queryClient.invalidateQueries({ queryKey: ['myRequests'] });
       toast.success('Request cancelled');
       navigate('/home');
     },
@@ -177,6 +189,8 @@ export default function RequestDetailPage() {
     mutationFn: () => api(`/requests/${request?._id}/fulfil`, { method: 'POST' }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['request', id || token] });
+      queryClient.invalidateQueries({ queryKey: ['requests'] });
+      queryClient.invalidateQueries({ queryKey: ['myRequests'] });
       toast.success('Request marked fulfilled successfully!');
     },
     onError: (err) => toast.error(err.message || 'Failed to fulfil request'),
@@ -288,7 +302,8 @@ export default function RequestDetailPage() {
           ← Back to Feed
         </Link>
         <div className="flex gap-2">
-          {((isOwner || isAdmin) && interests.some(i => ['INTERESTED', 'RESERVED', 'REVEAL_PENDING', 'CONTACT_REVEALED', 'CONFIRMED', 'DONATED'].includes(i.status))) && (
+          {(((isOwner || isAdmin) && interests.some(i => ['INTERESTED', 'RESERVED', 'REVEAL_PENDING', 'CONTACT_REVEALED', 'CONFIRMED', 'DONATED'].includes(i.status))) ||
+            (myInterest && ['INTERESTED', 'RESERVED', 'REVEAL_PENDING', 'CONTACT_REVEALED', 'CONFIRMED', 'DONATED'].includes(myInterest.status))) && (
             <button onClick={() => setIsChatOpen(true)} className="btn btn-primary btn-sm flex align-center gap-1">
               <MessageCircle size={14} />
               <span>Open Coordination Chat</span>
@@ -548,8 +563,24 @@ export default function RequestDetailPage() {
                     <Clock size={36} color="var(--warning-color)" />
                     <h3 style={{ fontWeight: 700, color: '#fff' }}>⚠️ Temporarily Reserved</h3>
                     <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                      Another donor has temporarily reserved this request to coordinate travel. You cannot express interest or reserve at this moment.
+                      Another donor has temporarily reserved this request to coordinate travel.
+                      {request.waitlistCount > 0 && ` (${request.waitlistCount} on waitlist)`}
                     </p>
+                    <button
+                      onClick={() => {
+                        if (!isAuthenticated) {
+                          toast.error('Please login to join the waitlist.');
+                          navigate('/login', { state: { from: `/request/${request._id}` } });
+                        } else {
+                          expressInterestMutation.mutate({ waitlist: true });
+                        }
+                      }}
+                      disabled={expressInterestMutation.isPending}
+                      className="btn btn-secondary"
+                      style={{ borderColor: 'var(--warning-color)', color: 'var(--warning-color)', width: '100%' }}
+                    >
+                      {expressInterestMutation.isPending ? 'Joining Waitlist...' : '📋 Join Priority Waitlist'}
+                    </button>
                   </div>
                 ) : (
                   <div className="card text-center flex flex-col align-center gap-4">
@@ -590,6 +621,17 @@ export default function RequestDetailPage() {
                   </div>
                 )}
               </>
+            )}
+
+            {/* Interest Status: Waitlisted */}
+            {myInterest && myInterest.status === 'WAITLISTED' && (
+              <div className="card text-center flex flex-col align-center gap-4" style={{ borderColor: 'var(--warning-color)' }}>
+                <Clock size={36} color="var(--warning-color)" />
+                <h3 style={{ fontWeight: 700, color: '#fff' }}>📋 You are on the Waitlist</h3>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  You are registered on the priority waitlist for this request. If the currently reserved donor withdraws or their reservation expires, you will be automatically promoted!
+                </p>
+              </div>
             )}
 
             {/* Interest Status: Reserved by current user */}

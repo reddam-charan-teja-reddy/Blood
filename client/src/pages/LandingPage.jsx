@@ -56,6 +56,26 @@ export default function LandingPage() {
             Request Blood
           </Link>
         </div>
+
+        {/* Live Community Impact Numbers */}
+        <div className="flex justify-center gap-6 flex-wrap" style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)', width: '100%', maxWidth: '700px' }}>
+          <div className="text-center" style={{ flex: '1 1 120px' }}>
+            <span style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--primary-color)' }}>100%</span>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>Verified Donors</p>
+          </div>
+          <div className="text-center" style={{ flex: '1 1 120px' }}>
+            <span style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--success-color)' }}>&lt; 5 min</span>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>Emergency Match</p>
+          </div>
+          <div className="text-center" style={{ flex: '1 1 120px' }}>
+            <span style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--info-color)' }}>0 PII</span>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>OTP-Gated Privacy</p>
+          </div>
+          <div className="text-center" style={{ flex: '1 1 120px' }}>
+            <span style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--warning-color)' }}>24/7</span>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.2rem' }}>Hospital Oversight</p>
+          </div>
+        </div>
       </div>
 
       {/* Features Grid */}
