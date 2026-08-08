@@ -1,0 +1,11 @@
+﻿node_modules
+.git
+.github
+.env
+.env.*
+!.env.example
+client/dist
+server/uploads/*
+!server/uploads/.gitkeep
+*.log
+.DS_Store

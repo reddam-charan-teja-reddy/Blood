@@ -1,0 +1,85 @@
+services:
+  mongodb:
+    image: mongo:7
+    container_name: blood-network-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - blood-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: blood-network-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - blood-network
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: blood-network-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongodb:27017/blood-network
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=productionsecretkeythatisatleast32characterslongforbloodnetwork
+      - JWT_REFRESH_SECRET=productionrefreshsecretkeythatisatleast32characterslongforbloodnetwork
+      - CLIENT_URL=http://localhost:80
+      - CORS_ORIGIN=http://localhost:80,http://localhost:5173
+      - BYPASS_OTP=false
+      - LOG_LEVEL=info
+      - LOG_FORMAT=json
+      - ENABLE_HTTP_LOGGING=true
+    volumes:
+      - server_uploads:/app/uploads
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - blood-network
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: blood-network-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+    networks:
+      - blood-network
+
+volumes:
+  mongodb_data:
+  redis_data:
+  server_uploads:
+
+networks:
+  blood-network:
+    driver: bridge

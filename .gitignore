@@ -146,3 +146,12 @@ vite.config.ts.timestamp-*
 ## 
 uploads/*
 uploads
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+dist/
+dist-ssr/
